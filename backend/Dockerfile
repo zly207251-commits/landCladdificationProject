@@ -27,12 +27,15 @@ RUN apt-get update \
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# التعديل هنا: نسخ ملف المتطلبات من داخل مجلد backend في المستودع إلى داخل الحاوية
+# نسخ ملف المتطلبات من داخل مجلد backend في المستودع إلى داخل الحاوية
 COPY ./backend/requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip setuptools wheel \
+
+# تعديل السطر أدناه: تحديد إصدار setuptools لمنع اختفاء pkg_resources وتمرير بناء rasterio بنجاح
+RUN pip install --upgrade pip wheel \
+    && pip install "setuptools<70.0.0" \
     && pip install -r /app/requirements.txt
 
-# التعديل هنا: نسخ بقية كود الباكيند فقط من مجلد backend إلى داخل الحاوية
+# نسخ بقية كود الباكيند فقط من مجلد backend إلى داخل الحاوية
 COPY ./backend /app
 
 EXPOSE 8000
