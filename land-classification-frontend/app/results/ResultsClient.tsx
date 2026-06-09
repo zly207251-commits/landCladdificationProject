@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { API_CONFIG } from "@/app/lib/map-config";
+import ExportCenter from "@/app/components/ExportCenter";
+import AuditInterface from "@/app/components/AuditInterface";
 
 interface ResultsClientProps {
   taskId: string;
@@ -65,6 +67,79 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
       </div>
     );
   };
+
+  const normalizePolygon = (polygon: any) => {
+    if (!Array.isArray(polygon) || polygon.length === 0) return [];
+
+    let ring = polygon;
+    if (Array.isArray(polygon[0]) && Array.isArray(polygon[0][0])) {
+      if (Array.isArray(polygon[0][0])) {
+        ring = polygon[0];
+      }
+    }
+
+    if (!Array.isArray(ring[0]) || ring[0].length < 2) return [];
+
+    const normalizedRing = ring
+      .filter((coord: any) => Array.isArray(coord) && coord.length >= 2)
+      .map((coord: any) => {
+        const [a, b] = coord;
+        if (typeof a !== 'number' || typeof b !== 'number') return null;
+        if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && a < 90 && b > 90) {
+          return [b, a];
+        }
+        return coord;
+      })
+      .filter((coord: any) => coord !== null);
+
+    if (normalizedRing.length < 4) return [];
+
+    const first = normalizedRing[0];
+    const last = normalizedRing[normalizedRing.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      normalizedRing.push(first);
+    }
+
+    return [normalizedRing];
+  };
+
+  const isValidPolygon = (geometry: any) => {
+    return (
+      geometry?.type === 'Polygon' &&
+      Array.isArray(geometry.coordinates) &&
+      geometry.coordinates.length > 0 &&
+      Array.isArray(geometry.coordinates[0]) &&
+      geometry.coordinates[0].length >= 4
+    );
+  };
+
+  const taskFeatures = report?.layers?.flatMap((ly: any, idx: number) => {
+    if (!ly.geo_polygons || ly.geo_polygons.length === 0) return [];
+
+    return ly.geo_polygons.flatMap((polygon: any, polygonIdx: number) => {
+      const coordinates = normalizePolygon(polygon);
+      const feature = {
+        id: `feature_${idx + 1}_${polygonIdx + 1}`,
+        properties: {
+          name: ly.layer_name,
+          classification: ly.local_classification?.class_name || ly.layer_name,
+          layer_type: ly.layer_name,
+          area: ly.area_sq_meters,
+          description: ly.description,
+          local_classification: ly.local_classification,
+          area_agricultural: ly.area_agricultural
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates
+        }
+      };
+
+      return isValidPolygon(feature.geometry) ? feature : [];
+    });
+  }) || [];
+
+  const availableLayerNames = report?.layers?.map((ly: any) => ly.layer_name) || [];
 
   const formatDate = (value: string | undefined) => {
     if (!value) return '-';
@@ -151,6 +226,32 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="font-semibold text-lg mb-4">أدوات التصدير والتدقيق للمهمة السابقة</h3>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                <h4 className="font-semibold mb-3">تصدير المهمة</h4>
+                <ExportCenter
+                  jobId={report.task_id}
+                  availableLayers={availableLayerNames}
+                  reportData={report}
+                  onExport={() => {
+                    // يمكن توسيع السلوك لاحقًا
+                  }}
+                />
+              </div>
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
+                <AuditInterface
+                  initialFeatures={taskFeatures}
+                  onSaveCorrections={(corrections) => {
+                    console.log('Saved corrections for previous task:', corrections);
+                  }}
+                />
+              </div>
             </div>
           </div>
 

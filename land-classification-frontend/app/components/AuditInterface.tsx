@@ -182,10 +182,21 @@ export default function AuditInterface({ initialFeatures = [], onSaveCorrections
     color: style.color
   }));
 
+  const isValidFeature = (feature: any) => {
+    return (
+      feature?.type === 'Feature' &&
+      feature.geometry?.type === 'Polygon' &&
+      Array.isArray(feature.geometry.coordinates) &&
+      feature.geometry.coordinates[0]?.length >= 4
+    );
+  };
+
+  const validFeatures = features.filter(isValidFeature);
+
   // GeoJSON للخريطة
   const geojsonData = {
     type: 'FeatureCollection',
-    features: features
+    features: validFeatures
   };
 
   return (

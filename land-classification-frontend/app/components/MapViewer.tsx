@@ -85,9 +85,58 @@ export default function MapViewer({
     }
   };
 
+  const isValidCoordinate = (coord: any) => {
+    return (
+      Array.isArray(coord) &&
+      coord.length >= 2 &&
+      typeof coord[0] === 'number' &&
+      typeof coord[1] === 'number' &&
+      Number.isFinite(coord[0]) &&
+      Number.isFinite(coord[1])
+    );
+  };
+
+  const isLinearRing = (ring: any) => {
+    return (
+      Array.isArray(ring) &&
+      ring.length >= 4 &&
+      ring.every(isValidCoordinate) &&
+      isValidCoordinate(ring[0]) &&
+      isValidCoordinate(ring[ring.length - 1]) &&
+      ring[0][0] === ring[ring.length - 1][0] &&
+      ring[0][1] === ring[ring.length - 1][1]
+    );
+  };
+
+  const isValidGeometry = (geometry: any) => {
+    return (
+      geometry?.type === 'Polygon' &&
+      Array.isArray(geometry.coordinates) &&
+      geometry.coordinates.every(isLinearRing)
+    );
+  };
+
+  const isValidFeature = (feature: any) => {
+    return (
+      feature?.type === 'Feature' &&
+      isValidGeometry(feature.geometry)
+    );
+  };
+
+  const isValidFeatureCollection = (data: any) => {
+    return (
+      data?.type === 'FeatureCollection' &&
+      Array.isArray(data.features) &&
+      data.features.every(isValidFeature)
+    );
+  };
+
   // وظيفة عرض GeoJSON
   const renderGeoJSON = () => {
-    if (!geojsonData) return null;
+    if (!geojsonData || !isValidFeatureCollection(geojsonData)) {
+      console.warn('Invalid GeoJSON object in MapViewer:', geojsonData);
+      return null;
+    }
 
     const onEachFeature = (feature: any, layer: L.Layer) => {
       layer.on({

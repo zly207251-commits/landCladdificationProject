@@ -6,10 +6,11 @@ import { EXPORT_FORMATS } from '@/app/lib/map-config';
 interface ExportCenterProps {
   jobId?: string;
   availableLayers?: string[];
+  reportData?: any;
   onExport?: (format: string, layers: string[]) => void;
 }
 
-export default function ExportCenter({ jobId, availableLayers = [], onExport }: ExportCenterProps) {
+export default function ExportCenter({ jobId, availableLayers = [], reportData, onExport }: ExportCenterProps) {
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['geojson', 'kml']);
   const [selectedLayers, setSelectedLayers] = useState<string[]>(availableLayers);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -22,45 +23,118 @@ export default function ExportCenter({ jobId, availableLayers = [], onExport }: 
     'agricultural', 'forest', 'mountainous', 'residential', 'commercial'
   ];
 
-  // بدء عملية التصدير
+  // توليد محتوى GeoJSON من البيانات
+  const buildGeoJSON = (layers: any[]) => {
+    const features = layers.flatMap((ly, layerIdx) => {
+      if (!ly.geo_polygons || ly.geo_polygons.length === 0) return [];
+      return ly.geo_polygons.map((polygon: any, polygonIdx: number) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: Array.isArray(polygon[0]) && Array.isArray(polygon[0][0]) ? polygon : [polygon]
+        },
+        properties: {
+          layer_name: ly.layer_name,
+          area_sq_meters: ly.area_sq_meters,
+          area_agricultural: ly.area_agricultural,
+          description: ly.description,
+          local_classification: ly.local_classification,
+          original_layer_index: layerIdx,
+          polygon_index: polygonIdx
+        }
+      }));
+    });
+
+    return JSON.stringify({ type: 'FeatureCollection', features }, null, 2);
+  };
+
+  const buildCSV = (layers: any[]) => {
+    const headers = [
+      'layer_name',
+      'area_sq_meters',
+      'area_agricultural',
+      'polygons_count',
+      'description',
+      'class_name',
+      'soil_type',
+      'water_relation'
+    ];
+
+    const rows = layers.map((ly) => {
+      const fields = [
+        ly.layer_name,
+        ly.area_sq_meters,
+        ly.area_agricultural,
+        ly.polygons_count,
+        ly.description,
+        ly.local_classification?.class_name || '',
+        ly.local_classification?.soil_type || '',
+        ly.local_classification?.water_relation || ''
+      ];
+      return fields.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',');
+    });
+
+    return [headers.join(','), ...rows].join('\n');
+  };
+
+  const downloadFile = (filename: string, content: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  };
+
   const handleExport = () => {
     if (selectedFormats.length === 0 || selectedLayers.length === 0) {
       alert('يرجى اختيار صيغة وطبقات للتصدير');
       return;
     }
 
+    const layers = reportData?.layers?.filter((layer: any) => selectedLayers.includes(layer.layer_name)) || [];
+    if (layers.length === 0) {
+      alert('لا توجد بيانات صالحة للتصدير لهذه المهمة');
+      return;
+    }
+
     setIsExporting(true);
     setExportProgress(0);
 
-    // محاكاة عملية التصدير
     const interval = setInterval(() => {
       setExportProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
-          
-          // محاكاة اكتمال التصدير
           setTimeout(() => {
-            setIsExporting(false);
-            
-            // عرض رابط التحميل الوهمي
-            const downloadLinks = selectedFormats.map(format => {
+            selectedFormats.forEach((format) => {
               const formatInfo = EXPORT_FORMATS[format as keyof typeof EXPORT_FORMATS];
-              return {
-                format: formatInfo.name,
-                filename: `export_${jobId || Date.now()}${formatInfo.extension}`,
-                size: `${Math.floor(Math.random() * 5000) + 1000} KB`,
-                url: '#'
-              };
+              let content = '';
+              let mimeType = 'application/json';
+              let filename = `export_${jobId || Date.now()}${formatInfo.extension}`;
+
+              if (format === 'geojson') {
+                content = buildGeoJSON(layers);
+                mimeType = 'application/geo+json';
+              } else if (format === 'csv') {
+                content = buildCSV(layers);
+                mimeType = 'text/csv';
+              } else {
+                content = JSON.stringify({ metadata: reportData?.metadata ?? {}, layers }, null, 2);
+              }
+
+              downloadFile(filename, content, mimeType);
             });
 
-            // عرض نتائج التصدير
+            setIsExporting(false);
             alert(`✅ تم تصدير ${selectedFormats.length} صيغة لـ ${selectedLayers.length} طبقة بنجاح!`);
-            
+
             if (onExport) {
               onExport(selectedFormats.join(','), selectedLayers);
             }
           }, 500);
-          
+
           return 100;
         }
         return prev + 10;
