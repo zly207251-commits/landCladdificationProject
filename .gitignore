@@ -1,0 +1,50 @@
+# Node
+node_modules/
+.next/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Python
+venv/
+.venv/
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+*.env
+*.venv
+
+# Temp
+.DS_Store
+Thumbs.db
+temp_uploads/
+*.tmp
+*.swp
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Generated
+coverage/
+coverage.*
+*.cover
+*.py,cover
+htmlcov/
+reports/
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Other
+*.pem
