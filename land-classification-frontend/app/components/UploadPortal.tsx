@@ -54,7 +54,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
 
       // تنفيذ رفع حقيقي إلى الـ API الخلفي
       const formData = new FormData();
-      formData.append('image', file);
+      formData.append('file', file);
       // نرسل بعض القيم الافتراضية للإسقاط (يمكن تعديلها عبر واجهة)
       formData.append('pixel_scale_meters', String(0.5));
       formData.append('ref_latitude', String(24.7136));

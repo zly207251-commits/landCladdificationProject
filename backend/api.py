@@ -1,12 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 import uvicorn
 import numpy as np
 import cv2
 import io
 import uuid
 import os
+import mimetypes
 
 # استيراد مكونات نظام الوكلاء
 from agent_system.memory import SharedMemory
@@ -22,7 +23,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000","https://landcladdificationproject-production.up.railway.app/"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -152,12 +153,25 @@ def get_task_report(task_id: str):
     return {
         "task_id": task_id,
         "status": task["status"],
+        "created_at": task["created_at"],
+        "updated_at": task["updated_at"],
         "image_path": task["image_path"],
+        "image_url": f"/tasks/{task_id}/image",
         "metadata": task["metadata"],
         "layers": report_layers
     }
 
-@app.get("/tasks/{task_id}/logs", summary="4. جلب السجل الحقيقي للمراسلات بين الوكلاء")
+@app.get("/tasks/{task_id}/image", summary="4. جلب صورة المهمة الأصلية")
+def get_task_image(task_id: str):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+    image_path = task["image_path"]
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="الصورة غير موجودة على الخادم.")
+    return FileResponse(image_path, filename=os.path.basename(image_path))
+
+@app.get("/tasks/{task_id}/logs", summary="5. جلب السجل الحقيقي للمراسلات بين الوكلاء")
 def get_task_logs(task_id: str):
     """
     جلب كافة سجلات التخاطب والخطوات التي قام بها الوكلاء بالتفصيل والزمن الفعلي.

@@ -25,17 +25,20 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
 
   // محاكاة عملية المعالجة
   const startProcessing = () => {
-    if (isProcessing) return;
+    if (isProcessing || !jobId) return;
 
     setIsProcessing(true);
     setProcessingTime(0);
     setCurrentStage('upload');
-
-    // إذا تم تمرير jobId، نبدأ الاستعلام الدوري عن الحالة
-    if (jobId) {
-      pollStatus(jobId);
-    }
+    pollStatus(jobId);
   };
+
+  // تشغيل المعالجة تلقائياً عندما يصل معرف المهمة
+  useEffect(() => {
+    if (jobId && !isProcessing) {
+      startProcessing();
+    }
+  }, [jobId]);
 
   // دالة الاستعلام الدوري عن حالة المهمة في الباكند
   const pollStatus = (taskId: string) => {
@@ -119,6 +122,23 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
 
     return { ...config, ...stage };
   };
+
+  if (!jobId) {
+    return (
+      <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4">لا توجد مهمة حالية</h2>
+        <p className="text-gray-600 mb-6">
+          لم يتم رفع أي صورة بعد. ارفع صورة لبدء مهمة جديدة ومتابعة حالة المعالجة.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+        >
+          العودة إلى الرفع
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl shadow-xl p-8">
