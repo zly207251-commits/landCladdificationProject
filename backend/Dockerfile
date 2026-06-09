@@ -1,5 +1,5 @@
 # Backend container for FastAPI + GDAL/PROJ-based land classification
-FROM python:3.12-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
