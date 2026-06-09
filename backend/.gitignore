@@ -1,0 +1,51 @@
+# ==========================================
+# ملف .gitignore لمشروع Geo-AI Swarm
+# يتجاهل الملفات المحلية والمؤقتة وغير الضرورية
+# ==========================================
+
+# 1. ملفات البيئة الافتراضية للبايثون (Python Virtual Environment)
+venv/
+.venv/
+env/
+ENV/
+
+# 2. ملفات الكاش وملفات الكود المترجمة (Python Cache)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# 3. نموذج الذكاء الاصطناعي SAM (كبير جداً 375 ميجابايت ولا يرفع على GitHub)
+sam_vit_b_01ec64.pth
+*.pth
+*.onnx
+*.pkl
+
+# 4. الذاكرة المشتركة وقاعدة البيانات المحلية (Local Databases)
+shared_memory.db
+shared_memory.db-journal
+
+# 5. مجلد الصور المؤقتة المرفوعة للتحليل
+temp_uploads/
+
+# 6. إعدادات بيئة التطوير (IDE Settings)
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# 7. ملفات الأرشيف والضغط الكبيرة
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# 8. ملفات تسجيل الأخطاء والسجلات المؤقتة (Logs)
+*.log
+agent_system/*.log
+.gemini/
