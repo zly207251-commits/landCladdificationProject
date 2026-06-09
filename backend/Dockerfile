@@ -7,16 +7,14 @@ ENV CPL_TO_WGS84=YES
 ENV PROJ_NETWORK=ON
 ENV PORT=8000
 
+# منع التوقف المفاجئ بانتظار أي مدخلات أثناء تثبيت حزم النظام
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /app
 
-# تثبيت حزم النظام الجغرافية والترجمة وأداة git الضرورية لسحب segment-anything
+# 1. طبقة أدوات النظام الأساسية والمترجم (تُبنى بسرعة وتُخزن في الكاش)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        gdal-bin \
-        libgdal-dev \
-        libproj-dev \
-        libgeos-dev \
-        libspatialindex-dev \
         build-essential \
         gcc \
         python3-dev \
@@ -24,11 +22,21 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
+# 2. طبقة الحزم الجغرافية الضخمة (مفصولة لضمان عدم إعادة تحميل الـ 207 ميجابايت عند أي تعديل بسيط)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gdal-bin \
+        libgdal-dev \
+        libproj-dev \
+        libgeos-dev \
+        libspatialindex-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # ضبط مسارات المترجم للتعرف على حزم النظام الجغرافية أثناء تثبيت مكتبات بايثون
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# التعديل هنا: بما أن بيئة البناء داخل مجلد backend حالياً، فالملف متواجد في المسار الحالي مباشرة
+# نسخ ملف المتطلبات (تأكد من تعديل إصدار ezdxf فيه أولاً)
 COPY ./requirements.txt /app/requirements.txt
 
 # تثبيت الحزم وحل مشكلة pkg_resources عبر تثبيت إصدار setuptools متوافق
@@ -36,7 +44,7 @@ RUN pip install --upgrade pip wheel \
     && pip install "setuptools<70.0.0" \
     && pip install -r /app/requirements.txt
 
-# التعديل هنا: نسخ كل محتويات المجلد الحالي مباشرة إلى داخل الحاوية
+# نسخ ملفات المشروع بالكامل (وضعت في النهاية لضمان عدم كسر كاش الحزم عند تعديل الكود)
 COPY . /app
 
 EXPOSE 8000
