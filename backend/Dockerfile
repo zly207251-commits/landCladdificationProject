@@ -44,6 +44,9 @@ RUN pip install --upgrade pip wheel \
     && pip install "setuptools<70.0.0" \
     && pip install -r /app/requirements.txt
 
+# تحميل أوزان نموذج SAM وحفظها داخل مجلد التطبيق (ستُحمل مرة واحدة وتُخزن في الكاش)
+RUN curl -L -o /app/sam_vit_b_01ec64.pth https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+
 # نسخ ملفات المشروع بالكامل (وضعت في النهاية لضمان عدم كسر كاش الحزم عند تعديل الكود)
 COPY . /app
 
