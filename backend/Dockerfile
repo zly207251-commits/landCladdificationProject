@@ -27,13 +27,13 @@ RUN apt-get update \
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# نسخ ملف المتطلبات بمسار صريح ومباشر وتثبيته
-COPY ./requirements.txt /app/requirements.txt
+# التعديل هنا: نسخ ملف المتطلبات من داخل مجلد backend في المستودع إلى داخل الحاوية
+COPY ./backend/requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip setuptools wheel \
     && pip install -r /app/requirements.txt
 
-# نسخ بقية ملفات المشروع وكود السيرفر
-COPY . /app
+# التعديل هنا: نسخ بقية كود الباكيند فقط من مجلد backend إلى داخل الحاوية
+COPY ./backend /app
 
 EXPOSE 8000
 
