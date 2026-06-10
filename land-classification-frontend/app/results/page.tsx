@@ -3,13 +3,15 @@ import Link from "next/link";
 import ResultsClient from "./ResultsClient";
 
 interface ResultsPageProps {
-  searchParams: {
-    task_id?: string;
-  };
+  searchParams: Promise<{
+    task_id?: string | string[];
+  }>;
 }
 
-export default function ResultsPage({ searchParams }: ResultsPageProps) {
-  const taskId = searchParams?.task_id;
+export default async function ResultsPage({ searchParams }: ResultsPageProps) {
+  const resolvedSearchParams = await searchParams;
+  const rawTaskId = resolvedSearchParams?.task_id;
+  const taskId = Array.isArray(rawTaskId) ? rawTaskId[0] : rawTaskId;
 
   return (
     <div className="min-h-screen bg-gray-50">

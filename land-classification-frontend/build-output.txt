@@ -1,0 +1,6 @@
+﻿
+> land-classification-frontend@0.1.0 build
+> next build
+
+   ظû▓ Next.js 15.2.3
+

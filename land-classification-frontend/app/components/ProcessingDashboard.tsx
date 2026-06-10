@@ -15,6 +15,7 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
   const [processingTime, setProcessingTime] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [backendStatus, setBackendStatus] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [estimatedTime, setEstimatedTime] = useState<number>(120); // 120 ثانية من PDF
 
   // تهيئة مراحل المعالجة
@@ -30,6 +31,8 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
     setIsProcessing(true);
     setProcessingTime(0);
     setCurrentStage('upload');
+    setBackendStatus(null);
+    setPollError(null);
     pollStatus(jobId);
   };
 
@@ -46,40 +49,43 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
 
     const check = async () => {
       try {
-        const url = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${PROCESSING_STAGES ? '' : ''}`;
-        // بناء رابط الحالة
-        const statusEndpoint = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') +
-          (PROCESSING_STAGES ? '' : '');
-
-        const endpoint = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') +
-          `/tasks/${taskId}/status`;
-
+        const endpoint = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/tasks/${taskId}/status`;
         const resp = await fetch(endpoint);
         if (!resp.ok) throw new Error(`Status ${resp.status}`);
         const data = await resp.json();
         setBackendStatus(data.status);
+        setPollError(null);
 
         if (data.status === 'COMPLETED') {
           setCurrentStage('gis_generation');
+          setProcessingTime(estimatedTime);
           setIsProcessing(false);
           if (onComplete) onComplete();
           stopped = true;
           return;
         }
+
         if (data.status === 'FAILED') {
+          setCurrentStage('specialist_processing');
           setIsProcessing(false);
+          setPollError('المهمة فشلت على الخادم. تحقق من السجلات أو أعد المحاولة.');
           if (onError) onError('المهمة فشلت في الخادم');
           stopped = true;
           return;
         }
 
-        // خريطة تقريبية للمراحل حسب حالة الخادم
-        if (data.status === 'PENDING') setCurrentStage('upload');
-        else setCurrentStage('agent_classification');
+        if (data.status === 'PENDING') {
+          setCurrentStage('upload');
+        } else if (data.status === 'RUNNING') {
+          setCurrentStage('agent_classification');
+        } else {
+          setCurrentStage('specialist_processing');
+        }
 
+        setProcessingTime((prev) => Math.min(prev + 3, estimatedTime));
       } catch (err) {
-        // لا نكسر الحلقة عند أخطاء مؤقتة، ولكن نبلغ اليوزر إن دامت
         console.warn('pollStatus error', err);
+        setPollError('تعذّر الاتصال بخادم الحالة. حاول التحقق من اتصال الخادم أو إعادة تحميل الصفحة.');
       }
 
       if (!stopped) {
@@ -147,11 +153,23 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           لوحة تتبع المعالجة
         </h2>
         
+<div className="flex flex-wrap gap-2 items-center">
         {jobId && (
           <div className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
             رقم المهمة: {jobId}
           </div>
         )}
+        {backendStatus && (
+          <div className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
+            حالة الخادم: {backendStatus}
+          </div>
+        )}
+      </div>
+      {pollError && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <strong>خطأ حالة المهمة:</strong> {pollError}
+        </div>
+      )}
       </div>
 
       {/* شريط التقدم الرئيسي */}

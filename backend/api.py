@@ -51,16 +51,22 @@ def run_agent_swarm_background(task_id: str, image_path: str):
             "image_path": image_path,
             "messages": [],
             "completed_specialists": [],
-            "next_agent": "coordinator"
+            "next_agent": "coordinator",
+            "image_is_aerial": None,
+            "image_confidence": 0.0,
+            "skip_image_check": False
         }
         compiled_graph.invoke(initial_state)
     except Exception as e:
         # توثيق الفشل في باص الرسائل وتحديث الحالة
+        import traceback
+        error_msg = f"حدث خطأ أثناء تشغيل تدفق الوكلاء: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
         message_bus.publish(
             task_id=task_id,
             sender="system",
             message_type="ERROR",
-            content=f"حدث خطأ أثناء تشغيل تدفق الوكلاء: {str(e)}"
+            content=error_msg
         )
         memory.update_task_status(task_id, "FAILED")
 

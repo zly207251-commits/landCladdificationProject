@@ -26,8 +26,11 @@ class CoordinatorAgent(BaseAgent):
             
         current_status = task_info["status"]
         
+        # الحصول على قيمة image_is_aerial من الحالة
+        image_is_aerial = state.get("image_is_aerial")
+        
         if current_status == "PENDING":
-            # تحديث حالة المهمة لتبدأ العمل الفعلي
+            # تحديث الحالة إلى RUNNING
             memory.update_task_status(task_id, "RUNNING")
             self.message_bus.publish(
                 task_id=task_id,
@@ -36,55 +39,62 @@ class CoordinatorAgent(BaseAgent):
                 content=f"بدء تنفيذ المهمة {task_id}. تنظيم مسار فريق العمل."
             )
             
-            # الخطوة الأولى دائماً هي استدعاء وكيل الإسقاط لاستخراج الطبقات
-            self.message_bus.publish(
-                task_id=task_id,
-                sender=self.name,
-                message_type="SYSTEM",
-                content="الخطوة 1: استدعاء وكيل الإسقاط ورسم حدود المعالم والطبقات الجغرافية."
-            )
+            # الخطوة الأولى دائماً: فحص الصورة
             return {
-                "next_agent": "projection_agent"
+                "next_agent": "image_inspector"
             }
             
         elif current_status == "RUNNING":
-            # التأكد من نجاح وكيل الإسقاط في إنشاء الطبقات في قاعدة البيانات
-            layers = memory.get_task_layers(task_id)
-            if not layers:
+            # تحقق مما إذا كان لدينا نتيجة فحص الصورة
+            if image_is_aerial is None:
+                # لم نقم بفحص الصورة بعد → ارسل إلى فاحص الصورة
+                return {"next_agent": "image_inspector"}
+                
+            if image_is_aerial is False:
+                # الصورة ليست جوية → ننهي المهمة
                 self.message_bus.publish(
                     task_id=task_id,
                     sender=self.name,
                     message_type="WARNING",
-                    content="لم يتم استخراج أي طبقات معالم بعد. إعادة توجيه الطلب لوكيل الإسقاط."
+                    content="الصورة لا تبدو صورة جوية. يتم إيقاف التحليل."
+                )
+                memory.update_task_status(task_id, "FAILED")
+                return {"next_agent": "end"}
+                
+            # الصورة جوية → نكمل التحليل
+            layers = memory.get_task_layers(task_id)
+            
+            if not layers:
+                # لم يتم استخراج طبقات بعد → ارسل إلى وكيل الإسقاط
+                self.message_bus.publish(
+                    task_id=task_id,
+                    sender=self.name,
+                    message_type="SYSTEM",
+                    content="الخطوة التالية: استخراج المعالم وتحديد المساحات."
                 )
                 return {"next_agent": "projection_agent"}
                 
-            # مراجعة قائمة التخصصات المطلوب تشغيلها ومقارنتها بالوكلاء المكتملين
+            # تحقق من الوكلاء المتخصصين الذين لم يتم تشغيلهم بعد
             completed_specialists = state.get("completed_specialists", [])
             
             for specialist in self.active_specialists:
-                # إذا لم يكن الوكيل الخبير قد تم تشغيله بعد، يتم توجيه العمل له فوراً
                 if specialist not in completed_specialists:
                     self.message_bus.publish(
                         task_id=task_id,
                         sender=self.name,
                         message_type="SYSTEM",
-                        content=f"توجيه البيانات الجغرافية والطبقات إلى الوكيل الخبير النشط: {specialist}"
+                        content=f"توجيه البيانات إلى الوكيل المتخصص: {specialist}"
                     )
                     return {"next_agent": specialist}
                     
-            # في حال اكتمال تشغيل كافة الوكلاء المتخصصين المحددين
+            # إذا اكتمل كل شيء → نجاح المهمة!
             memory.update_task_status(task_id, "COMPLETED")
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
                 message_type="COMPLETED",
-                content=f"اكتملت كافة خطوات التحليل بنجاح للمهمة: {task_id}"
+                content=f"🎉 اكتمل التحليل بنجاح للمهمة: {task_id}"
             )
-            return {
-                "next_agent": "end"
-            }
+            return {"next_agent": "end"}
             
-        return {
-            "next_agent": "end"
-        }
+        return {"next_agent": "end"}
