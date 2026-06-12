@@ -48,3 +48,6 @@ reports/
 
 # Other
 *.pem
+
+# Jupyter Notebook
+backend/run_sam.ipynb

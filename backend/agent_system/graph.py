@@ -6,7 +6,6 @@ from agent_system.messaging import MessageBus
 from agent_system.coordinator import CoordinatorAgent
 from agent_system.projection_agent import ProjectionAgent
 from agent_system.land_agent import LandAgent
-from agent_system.image_inspector_agent import ImageInspectorAgent
 from land_classifier import LandSegmenterSAM
 
 class SwarmState(TypedDict):
@@ -36,7 +35,6 @@ def create_swarm_graph(memory: SharedMemory, message_bus: MessageBus, segmenter:
     """
     # 1. تهيئة الوكلاء
     coordinator = CoordinatorAgent(message_bus, active_specialists=["land_agent"])
-    image_inspector = ImageInspectorAgent(message_bus)
     projection_agent = ProjectionAgent(message_bus, segmenter)
     land_agent = LandAgent(message_bus)
     
@@ -45,7 +43,6 @@ def create_swarm_graph(memory: SharedMemory, message_bus: MessageBus, segmenter:
     
     # 3. تسجيل عقد الوكلاء (Nodes) في الرسم البياني
     workflow.add_node("coordinator", lambda state: coordinator.run(state, memory))
-    workflow.add_node("image_inspector", lambda state: image_inspector.run(state, memory))
     workflow.add_node("projection_agent", lambda state: projection_agent.run(state, memory))
     workflow.add_node("land_agent", lambda state: land_agent.run(state, memory))
     
@@ -62,24 +59,9 @@ def create_swarm_graph(memory: SharedMemory, message_bus: MessageBus, segmenter:
                 return next_step
             return END
             
-        # الخطوة الأولى دائماً هي فحص الصورة (إذا لم يتم بعد)
-        if next_step == "image_inspector":
-            return "image_inspector"
-            
-        # بعد فحص الصورة، نقرا النتيجة
-        image_is_aerial = state.get("image_is_aerial")
-        
-        if image_is_aerial is True:
-            # إذا كانت صورة جوية، نتابع التحليل
-            if next_step in ["projection_agent", "land_agent"]:
-                return next_step
-            else:
-                return END
-                
-        elif image_is_aerial is False:
-            # إذا لم تكن صورة جوية، ننهي المهمة
-            return END
-            
+        # بعد إزالة وكيل فحص الصورة، نوجّه مباشرةً إلى الإسقاط أو المتخصصين حسب الخطة.
+        if next_step in ["projection_agent", "land_agent"]:
+            return next_step
         return END
         
     # إضافة الحواف الشرطية (Conditional Edges) انطلاقاً من المنسق
@@ -87,15 +69,12 @@ def create_swarm_graph(memory: SharedMemory, message_bus: MessageBus, segmenter:
         "coordinator",
         router,
         {
-            "image_inspector": "image_inspector",
             "projection_agent": "projection_agent",
             "land_agent": "land_agent",
             END: END
         }
     )
     
-    # إضافة حافة من فحص الصورة للمنسق مرة أخرى
-    workflow.add_edge("image_inspector", "coordinator")
     # إضافة الحواف العادية للرجوع إلى المنسق
     workflow.add_edge("projection_agent", "coordinator")
     workflow.add_edge("land_agent", "coordinator")

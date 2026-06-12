@@ -3,7 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+    // استخدم الرابط الأخضر الذي حصلت عليه من Ngrok هنا
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "https://bakeshop-corridor-malt.ngrok-free.dev",
   },
 };
 

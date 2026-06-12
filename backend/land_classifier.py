@@ -3,43 +3,63 @@ import numpy as np
 import os
 
 class LandSegmenterSAM:
-    def __init__(self, model_path="sam_vit_b_01ec64.pth"):
+    def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True):
         self.use_sam = False
         self.mask_generator = None
+        self.model_path = model_path
+        self.fail_fast = fail_fast
         
         # محاولة تحميل نموذج SAM إذا كان موجوداً
-        try:
-            print("🔄 محاولة تحميل نموذج SAM...")
-            
-            # تحقق من وجود ملف النموذج
-            if os.path.exists(model_path):
-                try:
-                    import torch
-                    from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+        print("🔄 محاولة تحميل نموذج SAM...")
+        if os.path.exists(model_path):
+            try:
+                import torch
+                from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 
-                    sam = sam_model_registry["vit_b"](checkpoint=model_path)
-                    sam.to("cpu")
+                sam = sam_model_registry["vit_b"](checkpoint=model_path)
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                sam.to(device)
 
-                    self.mask_generator = SamAutomaticMaskGenerator(
-                        model=sam,
-                        points_per_side=16,
-                        pred_iou_thresh=0.80,
-                        stability_score_thresh=0.88,
-                        min_mask_region_area=2000,
-                    )
-                    self.use_sam = True
-                    print("✔️ تم تحميل نموذج SAM بنجاح!")
-                except Exception as e:
-                    print(f"⚠️ لم يتم تحميل SAM: {e}")
+                self.mask_generator = SamAutomaticMaskGenerator(
+                    model=sam,
+                    points_per_side=16,
+                    pred_iou_thresh=0.80,
+                    stability_score_thresh=0.88,
+                    min_mask_region_area=2000,
+                )
+                self.use_sam = True
+                print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
+            except Exception as e:
+                msg = f"⚠️ لم يتم تحميل SAM: {e}"
+                if self.fail_fast:
+                    raise RuntimeError(msg)
+                else:
+                    print(msg)
                     print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
+        else:
+            msg = f"⚠️ لم يتم العثور على ملف النموذج: {model_path}"
+            if self.fail_fast:
+                raise FileNotFoundError(msg)
             else:
-                print(f"⚠️ لم يتم العثور على ملف النموذج: {model_path}")
+                print(msg)
                 print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
-        except ImportError:
-            print("⚠️ مكتبات SAM أو PyTorch غير موجودة!")
-            print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
 
     def segment_image(self, image):
+        # فحوصات أولية للصورة (Fail-fast)
+        if image is None:
+            raise ValueError("Invalid image: None provided to segment_image")
+        if not hasattr(image, 'shape') or len(image.shape) < 2:
+            raise ValueError("Invalid image: unexpected shape")
+        h, w = image.shape[:2]
+        if h < 50 or w < 50:
+            raise ValueError("Invalid image: too small for reliable segmentation")
+
+        # فحص السطوع للتأكد من أن الصورة صالحة
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        mean_brightness = float(np.mean(gray))
+        if mean_brightness < 5 or mean_brightness > 250:
+            raise ValueError(f"Invalid image: mean brightness={mean_brightness:.2f}")
+
         if self.use_sam and self.mask_generator:
             try:
                 masks = self.mask_generator.generate(image)
@@ -56,10 +76,17 @@ class LandSegmenterSAM:
                         polygons.append(approx.reshape(-1, 2).tolist())
                 return polygons
             except Exception as e:
-                print(f"⚠️ خطأ في SAM: {e}")
-                print("ℹ️ استخدام الطريقة البديلة")
-        
-        # الطريقة البديلة: استخدام الحدود البسيطة
+                msg = f"⚠️ خطأ في SAM أثناء التجزئة: {e}"
+                if self.fail_fast:
+                    raise RuntimeError(msg)
+                else:
+                    print(msg)
+                    print("ℹ️ استخدام الطريقة البديلة")
+
+        # إذا لم يتم تحميل SAM أو فشلنا ولكن نسمح بالتراجع، نستخدم الطريقة البديلة
+        if not self.use_sam and self.fail_fast:
+            raise RuntimeError("SAM model not available and fail_fast=True")
+
         return self._fallback_segmentation(image)
 
     def _fallback_segmentation(self, image):

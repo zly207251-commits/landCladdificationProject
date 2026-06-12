@@ -39,17 +39,12 @@ class CoordinatorAgent(BaseAgent):
                 content=f"بدء تنفيذ المهمة {task_id}. تنظيم مسار فريق العمل."
             )
             
-            # الخطوة الأولى دائماً: فحص الصورة
+            # الخطوة الأولى مباشرةً هي الإسقاط والتجزئة
             return {
-                "next_agent": "image_inspector"
+                "next_agent": "projection_agent"
             }
             
         elif current_status == "RUNNING":
-            # تحقق مما إذا كان لدينا نتيجة فحص الصورة
-            if image_is_aerial is None:
-                # لم نقم بفحص الصورة بعد → ارسل إلى فاحص الصورة
-                return {"next_agent": "image_inspector"}
-                
             if image_is_aerial is False:
                 # الصورة ليست جوية → ننهي المهمة
                 self.message_bus.publish(
@@ -60,12 +55,11 @@ class CoordinatorAgent(BaseAgent):
                 )
                 memory.update_task_status(task_id, "FAILED")
                 return {"next_agent": "end"}
-                
-            # الصورة جوية → نكمل التحليل
+
+            # لا يوجد فحص خارجي للصورة بعد الآن، نتابع مباشرةً بالإسقاط
             layers = memory.get_task_layers(task_id)
-            
+
             if not layers:
-                # لم يتم استخراج طبقات بعد → ارسل إلى وكيل الإسقاط
                 self.message_bus.publish(
                     task_id=task_id,
                     sender=self.name,
@@ -73,7 +67,7 @@ class CoordinatorAgent(BaseAgent):
                     content="الخطوة التالية: استخراج المعالم وتحديد المساحات."
                 )
                 return {"next_agent": "projection_agent"}
-                
+
             # تحقق من الوكلاء المتخصصين الذين لم يتم تشغيلهم بعد
             completed_specialists = state.get("completed_specialists", [])
             
