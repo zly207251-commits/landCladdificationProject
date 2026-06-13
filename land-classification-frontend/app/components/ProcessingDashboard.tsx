@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { PROCESSING_STAGES } from '@/app/lib/map-config';
+import { API_CONFIG, PROCESSING_STAGES } from '@/app/lib/map-config';
 
 interface ProcessingDashboardProps {
   jobId?: string;
@@ -49,7 +49,7 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
 
     const check = async () => {
       try {
-        const endpoint = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/tasks/${taskId}/status`;
+        const endpoint = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`;
         const resp = await fetch(endpoint);
         if (!resp.ok) throw new Error(`Status ${resp.status}`);
         const data = await resp.json();
