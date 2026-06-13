@@ -2,16 +2,16 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  
   async rewrites() {
     return [
       {
         source: "/api/:path*",
-        destination: "https://bakeshop-corridor-malt.ngrok-free.dev/:path*",
+        // سيقوم بسحب الرابط من متغير البيئة NEXT_PUBLIC_BACKEND_URL
+        // إذا لم يكن موجوداً، سيفشل الطلب بوضوح بدلاً من التخبط في localhost
+        destination: `${process.env.NEXT_PUBLIC_BACKEND_URL}/:path*`,
       },
     ];
-  },
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "/api",
   },
 };
 
