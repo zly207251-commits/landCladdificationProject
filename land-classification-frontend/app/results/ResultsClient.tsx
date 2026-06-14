@@ -272,10 +272,26 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                 {taskLogs.map((log, idx) => (
                   <div key={idx} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                     <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
-                      <span className="text-sm font-semibold text-gray-900">{log.agent || 'وكيل غير معروف'}</span>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">{log.agent || 'وكيل غير معروف'}</div>
+                        <div className="text-xs text-gray-500">{(log.type || '').toUpperCase()}</div>
+                      </div>
                       <span className="text-xs text-gray-500">{formatDate(log.timestamp || log.created_at)}</span>
                     </div>
-                    <p className="mt-2 text-sm text-gray-700">{log.message || log.detail || JSON.stringify(log)}</p>
+                    <p className="mt-3 text-sm text-gray-700 whitespace-pre-line">{log.content || log.message || 'بدون محتوى'}</p>
+                    {log.data && typeof log.data === 'object' && Object.keys(log.data).length > 0 && (
+                      <div className="mt-3 rounded-xl bg-white border border-gray-200 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">تفاصيل إضافية</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {Object.entries(log.data).map(([key, value]) => (
+                            <div key={key} className="rounded-lg bg-gray-100 p-2">
+                              <div className="text-[11px] font-semibold text-gray-600">{key}</div>
+                              <div className="mt-1 text-sm text-gray-800 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
