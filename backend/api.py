@@ -243,6 +243,12 @@ def get_task_logs(task_id: str):
         "logs": log_entries
     }
 
+@app.get("/tasks", summary="6. جلب قائمة المهام السابقة")
+def list_tasks(limit: int = 10):
+    """استرجاع ملخص المهام الأخيرة لعرضها في واجهة المستخدم."""
+    tasks = memory.get_tasks(limit=limit)
+    return {"tasks": tasks}
+
 # --- نهايات الاتصال الأساسية الموروثة (Legacy Endpoints) ---
 
 @app.get("/", response_class=HTMLResponse, summary="الصفحة الترحيبية للواجهة")

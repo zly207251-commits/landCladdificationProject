@@ -100,7 +100,8 @@ export const API_CONFIG = {
     upload: '/tasks/analyze',
     status: '/tasks/{task_id}/status',
     report: '/tasks/{task_id}/report',
-    logs: '/tasks/{task_id}/logs'
+    logs: '/tasks/{task_id}/logs',
+    tasks: '/tasks'
   },
   timeout: 120000 // 120 ثانية (من PDF)
 };

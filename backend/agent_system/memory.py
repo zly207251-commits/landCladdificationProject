@@ -107,6 +107,20 @@ class SharedMemory:
                 return data
         return None
 
+    def get_tasks(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """جلب قائمة المهام السابقة بترتيب الأحدث أولاً."""
+        tasks = []
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT task_id, status, metadata, created_at, updated_at FROM tasks ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            for r in rows:
+                task = dict(r)
+                task['metadata'] = json.loads(task['metadata']) if task['metadata'] else {}
+                tasks.append(task)
+        return tasks
+
     # --- عمليات إدارة الطبقات الجغرافية (Layers) ---
     
     def add_task_layer(

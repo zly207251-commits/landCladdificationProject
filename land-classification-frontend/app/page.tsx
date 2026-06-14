@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useRouter } from 'next/navigation';
 import UploadPortal from "./components/UploadPortal";
 import ProcessingDashboard from "./components/ProcessingDashboard";
+import TaskHistoryPanel from "./components/TaskHistoryPanel";
 const MapViewer = dynamic(() => import("./components/MapViewer"), { ssr: false });
 import ExportCenter from "./components/ExportCenter";
 import AuditInterface from "./components/AuditInterface";
@@ -153,41 +154,50 @@ export default function Home() {
         {appState === 'upload' && (
           <div className="space-y-8">
             {/* معلومات المشروع */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-md text-center">
-                <div className="w-12 h-12 mx-auto bg-green-100 rounded-full flex items-center justify-center mb-3">
-                  <span className="text-2xl">🎯</span>
+            <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-6">
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-white p-6 rounded-xl shadow-md text-center">
+                    <div className="w-12 h-12 mx-auto bg-green-100 rounded-full flex items-center justify-center mb-3">
+                      <span className="text-2xl">🎯</span>
+                    </div>
+                    <h3 className="font-semibold mb-2">تصنيف دقيق</h3>
+                    <p className="text-sm text-gray-600">
+                      استخدام أحدث نماذج الذكاء الاصطناعي للتصنيف
+                    </p>
+                  </div>
+                  <div className="bg-white p-6 rounded-xl shadow-md text-center">
+                    <div className="w-12 h-12 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-3">
+                      <span className="text-2xl">⚡</span>
+                    </div>
+                    <h3 className="font-semibold mb-2">نتائج سريعة</h3>
+                    <p className="text-sm text-gray-600">
+                      معالجة خلال 120 ثانية كحد أقصى
+                    </p>
+                  </div>
+                  <div className="bg-white p-6 rounded-xl shadow-md text-center">
+                    <div className="w-12 h-12 mx-auto bg-purple-100 rounded-full flex items-center justify-center mb-3">
+                      <span className="text-2xl">🔄</span>
+                    </div>
+                    <h3 className="font-semibold mb-2">واجهة تدقيق</h3>
+                    <p className="text-sm text-gray-600">
+                      أدوات تدقيق سهلة لتحسين النتائج
+                    </p>
+                  </div>
                 </div>
-                <h3 className="font-semibold mb-2">تصنيف دقيق</h3>
-                <p className="text-sm text-gray-600">
-                  استخدام أحدث نماذج الذكاء الاصطناعي للتصنيف
-                </p>
+
+                {/* بوابة الرفع */}
+                <UploadPortal
+                  onUploadComplete={handleUploadComplete}
+                  onProcessingStart={() => setAppState('processing')}
+                />
               </div>
-              <div className="bg-white p-6 rounded-xl shadow-md text-center">
-                <div className="w-12 h-12 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-3">
-                  <span className="text-2xl">⚡</span>
-                </div>
-                <h3 className="font-semibold mb-2">نتائج سريعة</h3>
-                <p className="text-sm text-gray-600">
-                  معالجة خلال 120 ثانية كحد أقصى
-                </p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-md text-center">
-                <div className="w-12 h-12 mx-auto bg-purple-100 rounded-full flex items-center justify-center mb-3">
-                  <span className="text-2xl">🔄</span>
-                </div>
-                <h3 className="font-semibold mb-2">واجهة تدقيق</h3>
-                <p className="text-sm text-gray-600">
-                  أدوات تدقيق سهلة لتحسين النتائج
-                </p>
+
+              {/* سجل المهام السابقة */}
+              <div>
+                <TaskHistoryPanel onSelectTask={(taskId) => router.push(`/results?task_id=${taskId}`)} />
               </div>
             </div>
-
-            {/* بوابة الرفع */}
-            <UploadPortal
-              onUploadComplete={handleUploadComplete}
-              onProcessingStart={() => setAppState('processing')}
-            />
           </div>
         )}
 
