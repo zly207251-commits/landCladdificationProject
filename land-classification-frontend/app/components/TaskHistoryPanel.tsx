@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from 'next/navigation';
 import { API_CONFIG } from "@/app/lib/map-config";
 
 interface TaskSummary {
@@ -11,11 +12,8 @@ interface TaskSummary {
   updated_at: string;
 }
 
-interface TaskHistoryPanelProps {
-  onSelectTask: (taskId: string) => void;
-}
-
-export default function TaskHistoryPanel({ onSelectTask }: TaskHistoryPanelProps) {
+export default function TaskHistoryPanel() {
+  const router = useRouter();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +87,7 @@ export default function TaskHistoryPanel({ onSelectTask }: TaskHistoryPanelProps
                   <span className={renderStatusBadge(task.status)}>{task.status}</span>
                   <button
                     type="button"
-                    onClick={() => onSelectTask(task.task_id)}
+                    onClick={() => router.push(`/results?task_id=${task.task_id}`)}
                     className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
                   >
                     استعراض المهمة
