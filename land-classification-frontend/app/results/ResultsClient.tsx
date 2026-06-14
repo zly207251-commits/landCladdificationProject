@@ -14,6 +14,9 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [report, setReport] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [taskLogs, setTaskLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState<boolean>(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -36,6 +39,31 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
     fetchReport();
   }, [taskId]);
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      if (!report?.task_id) return;
+      setLogsLoading(true);
+      setLogsError(null);
+
+      try {
+        const url = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.logs.replace('{task_id}', report.task_id)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`Server ${resp.status}: ${text}`);
+        }
+        const data = await resp.json();
+        setTaskLogs(data.logs || []);
+      } catch (err: any) {
+        setLogsError(err?.message || 'خطأ في جلب سجل المهمة');
+      } finally {
+        setLogsLoading(false);
+      }
+    };
+
+    fetchLogs();
+  }, [report?.task_id]);
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
 
@@ -152,6 +180,27 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
     }
   };
 
+  const agentSteps = [
+    {
+      id: 'coordinator',
+      title: 'وكيل المنسق',
+      description: 'يبدأ المهمة ويوجهها بين الوكلاء ويحدد الخطوة التالية.',
+      color: 'bg-blue-50 text-blue-700'
+    },
+    {
+      id: 'projection_agent',
+      title: 'وكيل الإسقاط',
+      description: 'يستخرج حدود القطع من الصورة ويحوّلها إلى إحداثيات جغرافية.',
+      color: 'bg-green-50 text-green-700'
+    },
+    {
+      id: 'land_agent',
+      title: 'وكيل الأراضي',
+      description: 'يصنّف قطع الأرض ويضيف الوصف المحلي ونوع التربة وعلاقة المياه.',
+      color: 'bg-red-50 text-red-700'
+    }
+  ];
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800 mb-4">نتائج المهمة</h1>
@@ -197,6 +246,40 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="font-semibold text-lg mb-4">سير عمل الوكلاء</h3>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {agentSteps.map((agent) => (
+                <div key={agent.id} className={`rounded-2xl border border-gray-200 p-4 ${agent.color}`}>
+                  <h4 className="font-semibold text-base mb-2">{agent.title}</h4>
+                  <p className="text-sm text-gray-700">{agent.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="font-semibold text-lg mb-4">سجل تنفيذ المهمة</h3>
+            {logsLoading && <p className="text-sm text-gray-600">جاري جلب سجل الوكلاء...</p>}
+            {logsError && <p className="text-sm text-red-600">{logsError}</p>}
+            {!logsLoading && !logsError && taskLogs.length === 0 && (
+              <p className="text-sm text-gray-500">لا توجد رسائل سجل متاحة بعد.</p>
+            )}
+            {!logsLoading && taskLogs.length > 0 && (
+              <div className="space-y-3">
+                {taskLogs.map((log, idx) => (
+                  <div key={idx} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
+                      <span className="text-sm font-semibold text-gray-900">{log.agent || 'وكيل غير معروف'}</span>
+                      <span className="text-xs text-gray-500">{formatDate(log.timestamp || log.created_at)}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-700">{log.message || log.detail || JSON.stringify(log)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="bg-white p-6 rounded-lg shadow">
