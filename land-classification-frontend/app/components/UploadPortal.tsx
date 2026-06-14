@@ -9,12 +9,20 @@ interface UploadPortalProps {
   onProcessingStart?: () => void;
 }
 
+type ImageType = 'regular' | 'geospatial';
+
 export default function UploadPortal({ onUploadComplete, onProcessingStart }: UploadPortalProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileInfo, setFileInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<string>('riyadh');
+  const [imageType, setImageType] = useState<ImageType>('regular');
+  const [pixelScale, setPixelScale] = useState('0.5');
+  const [refLatitude, setRefLatitude] = useState('24.7136');
+  const [refLongitude, setRefLongitude] = useState('46.6753');
+  const [geoCrs, setGeoCrs] = useState('EPSG:4326');
+  const [useGeoMetadata, setUseGeoMetadata] = useState(true);
 
   // المناطق المتاحة (من الفرونت اند الحالي + PDF)
   const regions = [
@@ -24,7 +32,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     { id: 'custom', name: 'منطقة مخصصة', coordinates: null }
   ];
 
-  // أنواع الملفات المدعومة (من الورد)
+  // أنواع الملفات المدعومة
   const acceptedFiles = {
     'image/jpeg': ['.jpg', '.jpeg'],
     'image/png': ['.png'],
@@ -41,24 +49,27 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     setError(null);
 
     try {
-      // معلومات الملف
       const fileInfo = {
         name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2), // ميغابايت
+        size: (file.size / (1024 * 1024)).toFixed(2),
         type: file.type,
         lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
-        region: selectedRegion
+        region: selectedRegion,
+        imageType,
+        geoCrs,
+        useGeoMetadata
       };
 
       setFileInfo(fileInfo);
 
-      // تنفيذ رفع حقيقي إلى الـ API الخلفي
       const formData = new FormData();
       formData.append('file', file);
-      // نرسل بعض القيم الافتراضية للإسقاط (يمكن تعديلها عبر واجهة)
-      formData.append('pixel_scale_meters', String(0.5));
-      formData.append('ref_latitude', String(24.7136));
-      formData.append('ref_longitude', String(46.6753));
+      formData.append('image_type', imageType);
+      formData.append('geospatial_crs', geoCrs);
+      formData.append('use_geo_metadata', String(useGeoMetadata));
+      formData.append('pixel_scale_meters', pixelScale);
+      formData.append('ref_latitude', refLatitude);
+      formData.append('ref_longitude', refLongitude);
 
       const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}`, {
         method: 'POST',
@@ -75,20 +86,15 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       setUploadProgress(100);
       setTimeout(() => setIsUploading(false), 400);
 
-      // استدعاء callback بالنتيجة (task_id)
-      if (onUploadComplete) {
-        onUploadComplete(result);
-      }
-      if (onProcessingStart) {
-        onProcessingStart();
-      }
+      if (onUploadComplete) onUploadComplete(result);
+      if (onProcessingStart) onProcessingStart();
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف');
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [selectedRegion, onUploadComplete, onProcessingStart]);
+  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, onUploadComplete, onProcessingStart]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -102,6 +108,102 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       <h2 className="text-2xl font-semibold mb-6 text-gray-800">
         بوابة رفع الصور الجوية
       </h2>
+
+      {/* اختيار نوع الصورة */}
+      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <p className="font-semibold text-slate-800 mb-3">نوع الصورة</p>
+        <div className="flex flex-wrap gap-3 mb-3">
+          <button
+            type="button"
+            onClick={() => setImageType('regular')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'regular' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            صورة عادية
+          </button>
+          <button
+            type="button"
+            onClick={() => setImageType('geospatial')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'geospatial' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            صورة جغرافية
+          </button>
+        </div>
+        <p className="text-sm text-slate-500">
+          اختر إذا كانت الصورة تحتوي على بيانات جغرافية مضمنة أو تحتاج إدخال بيانات الإسقاط يدوياً.
+        </p>
+      </div>
+
+      {/* إعدادات القياس والإحداثيات */}
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+          <h3 className="font-semibold text-slate-800 mb-3">إعدادات الصورة</h3>
+          <label className="block mb-3 text-sm text-slate-700">
+            <span className="block mb-1">مقياس البكسل (متر/بكسل)</span>
+            <input
+              type="number"
+              value={pixelScale}
+              onChange={(e) => setPixelScale(e.target.value)}
+              step="0.01"
+              min="0.01"
+              disabled={isUploading}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <label className="block mb-3 text-sm text-slate-700">
+            <span className="block mb-1">خط العرض المرجعي</span>
+            <input
+              type="number"
+              value={refLatitude}
+              onChange={(e) => setRefLatitude(e.target.value)}
+              step="0.0001"
+              disabled={isUploading}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <label className="block text-sm text-slate-700">
+            <span className="block mb-1">خط الطول المرجعي</span>
+            <input
+              type="number"
+              value={refLongitude}
+              onChange={(e) => setRefLongitude(e.target.value)}
+              step="0.0001"
+              disabled={isUploading}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+        </div>
+
+        {imageType === 'geospatial' && (
+          <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <h3 className="font-semibold text-slate-800 mb-3">معلومات الصورة الجغرافية</h3>
+            <label className="flex items-center gap-3 mb-4 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={useGeoMetadata}
+                onChange={(e) => setUseGeoMetadata(e.target.checked)}
+                disabled={isUploading}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              استخدام بيانات GeoTIFF المضمنة إذا كانت متاحة
+            </label>
+            <label className="block text-sm text-slate-700">
+              <span className="block mb-1">نظام الإحداثيات (CRS)</span>
+              <input
+                type="text"
+                value={geoCrs}
+                onChange={(e) => setGeoCrs(e.target.value)}
+                disabled={isUploading}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </label>
+            <p className="text-xs text-slate-500 mt-3">
+              إذا كان الملف يحتوي على بيانات جغرافية، سيحاول النظام استخدامها؛ وإلا سيعتمد على القيم اليدوية أعلاه.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* معلومات النظام */}
       <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">

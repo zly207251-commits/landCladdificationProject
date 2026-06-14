@@ -8,6 +8,10 @@ import io
 import uuid
 import os
 import mimetypes
+import importlib.util
+
+rasterio_spec = importlib.util.find_spec('rasterio')
+rasterio = importlib.import_module('rasterio') if rasterio_spec is not None else None
 
 # استيراد مكونات نظام الوكلاء
 from agent_system.memory import SharedMemory
@@ -42,6 +46,33 @@ segmenter = LandSegmenterSAM()
 UPLOAD_DIR = "temp_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
+def get_geotiff_metadata(path: str):
+    if rasterio is None or not path.lower().endswith(('.tif', '.tiff', '.geotiff')):
+        return None
+
+    try:
+        with rasterio.open(path) as ds:
+            transform = None
+            if hasattr(ds, 'transform'):
+                transform = ds.transform.to_gdal() if ds.transform is not None else None
+            return {
+                'crs': str(ds.crs) if ds.crs else None,
+                'transform': transform,
+                'width': ds.width,
+                'height': ds.height,
+                'count': ds.count,
+                'bounds': {
+                    'left': ds.bounds.left,
+                    'bottom': ds.bounds.bottom,
+                    'right': ds.bounds.right,
+                    'top': ds.bounds.top
+                }
+            }
+    except Exception:
+        return None
+
+
 def run_agent_swarm_background(task_id: str, image_path: str):
     """دالة تُنفذ في الخلفية لتشغيل تدفق الوكلاء عبر LangGraph دون إيقاف الواجهة."""
     try:
@@ -71,6 +102,9 @@ def run_agent_swarm_background(task_id: str, image_path: str):
 async def analyze_image_with_agents(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="الصورة الجوية المراد تحليلها"),
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
     pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
     ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
     ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية")
@@ -97,10 +131,19 @@ async def analyze_image_with_agents(
         
     # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
     task_metadata = {
+        "image_type": image_type,
+        "geospatial_crs": geospatial_crs,
+        "use_geo_metadata": use_geo_metadata,
         "pixel_scale_meters": pixel_scale_meters,
         "ref_latitude": ref_latitude,
         "ref_longitude": ref_longitude
     }
+
+    if image_type == 'geospatial' and use_geo_metadata:
+        geo_metadata = get_geotiff_metadata(temp_file_path)
+        if geo_metadata:
+            task_metadata['geo_metadata'] = geo_metadata
+
     memory.create_task(task_id, temp_file_path, task_metadata)
     
     # 4. إطلاق تدفق الوكلاء كعملية في الخلفية لمنع تعليق الطلب

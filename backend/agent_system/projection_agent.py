@@ -7,6 +7,11 @@ from agent_system.memory import SharedMemory
 from agent_system.messaging import MessageBus
 from land_classifier import LandSegmenterSAM
 
+try:
+    import rasterio
+except ImportError:
+    rasterio = None
+
 class ProjectionAgent(BaseAgent):
     """
     وكيل الإسقاط ورسم المعالم.
@@ -64,6 +69,10 @@ class ProjectionAgent(BaseAgent):
             content="تشغيل نموذج SAM لاستخراج حدود قطع الأراضي من الصورة الجوية."
         )
 
+        use_geo_metadata = bool(task_meta.get('use_geo_metadata', False))
+        geo_metadata = task_meta.get('geo_metadata') if task_meta.get('image_type') == 'geospatial' else None
+        transform = geo_metadata.get('transform') if isinstance(geo_metadata, dict) else None
+
         polygons = self.segmenter.segment_image(image)
         if not polygons:
             self.message_bus.publish(
@@ -83,15 +92,18 @@ class ProjectionAgent(BaseAgent):
 
             area_sqm = pixel_area * (pixel_scale ** 2)
 
-            lat_scale = 1.0 / 111111.0
-            lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
-            geo_poly = []
-            for pt in poly:
-                dx = pt[0] * pixel_scale
-                dy = -pt[1] * pixel_scale
-                point_lat = ref_lat + (dy * lat_scale)
-                point_lon = ref_lon + (dx * lon_scale)
-                geo_poly.append([point_lat, point_lon])
+            if transform is not None and len(transform) == 6:
+                geo_poly = [self._pixel_to_geo(pt, transform) for pt in poly]
+            else:
+                lat_scale = 1.0 / 111111.0
+                lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
+                geo_poly = []
+                for pt in poly:
+                    dx = pt[0] * pixel_scale
+                    dy = -pt[1] * pixel_scale
+                    point_lat = ref_lat + (dy * lat_scale)
+                    point_lon = ref_lon + (dx * lon_scale)
+                    geo_poly.append([point_lat, point_lon])
 
             feddan, qirat, sahm = self._convert_to_agricultural_units(area_sqm)
 
@@ -129,6 +141,13 @@ class ProjectionAgent(BaseAgent):
             "messages": state.get("messages", []) + [f"{self.name} has finished extracting land layers."],
             "next_agent": "coordinator"
         }
+
+    def _pixel_to_geo(self, pt: List[int], transform: Tuple[float, float, float, float, float, float]) -> List[float]:
+        a, b, c, d, e, f = transform
+        col, row = pt[0], pt[1]
+        x = a * col + b * row + c
+        y = d * col + e * row + f
+        return [float(y), float(x)]
 
     def _convert_to_agricultural_units(self, area_sqm: float) -> Tuple[int, int, float]:
         """دالة مساعدة لتحويل الأمتار المربعة إلى فدان، قيراط، وسهم."""
