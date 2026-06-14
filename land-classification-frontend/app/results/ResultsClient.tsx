@@ -17,6 +17,35 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [taskLogs, setTaskLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [showLogs, setShowLogs] = useState<boolean>(false);
+
+  const AGENT_LABELS: Record<string, string> = {
+    COORDINATOR: 'وكيل المنسق',
+    PROJECTION_AGENT: 'وكيل الإسقاط',
+    LAND_AGENT: 'وكيل الأراضي',
+    ORCHESTRATOR: 'منسق المهمة',
+    EXTRACTOR: 'مستخرج الحدود',
+    REVIEWER: 'وكيل الناقد'
+  };
+
+  const AGENT_COLORS: Record<string, string> = {
+    COORDINATOR: 'border-blue-300 bg-blue-50',
+    PROJECTION_AGENT: 'border-green-300 bg-green-50',
+    LAND_AGENT: 'border-red-300 bg-red-50',
+    ORCHESTRATOR: 'border-slate-300 bg-slate-50',
+    EXTRACTOR: 'border-emerald-300 bg-emerald-50',
+    REVIEWER: 'border-orange-300 bg-orange-50'
+  };
+
+  const getAgentLabel = (agent?: string) => {
+    if (!agent) return 'وكيل غير معروف';
+    return AGENT_LABELS[agent.toUpperCase()] || agent;
+  };
+
+  const getAgentCardClasses = (agent?: string) => {
+    if (!agent) return 'border-gray-200 bg-gray-50';
+    return AGENT_COLORS[agent.toUpperCase()] || 'border-gray-200 bg-gray-50';
+  };
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -64,6 +93,10 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
     fetchLogs();
   }, [report?.task_id]);
+
+  const toggleLogs = () => {
+    setShowLogs((prev) => !prev);
+  };
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
 
@@ -261,39 +294,53 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
           </div>
 
           <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="font-semibold text-lg mb-4">سجل تنفيذ المهمة</h3>
-            {logsLoading && <p className="text-sm text-gray-600">جاري جلب سجل الوكلاء...</p>}
-            {logsError && <p className="text-sm text-red-600">{logsError}</p>}
-            {!logsLoading && !logsError && taskLogs.length === 0 && (
-              <p className="text-sm text-gray-500">لا توجد رسائل سجل متاحة بعد.</p>
-            )}
-            {!logsLoading && taskLogs.length > 0 && (
-              <div className="space-y-3">
-                {taskLogs.map((log, idx) => (
-                  <div key={idx} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900">{log.agent || 'وكيل غير معروف'}</div>
-                        <div className="text-xs text-gray-500">{(log.type || '').toUpperCase()}</div>
-                      </div>
-                      <span className="text-xs text-gray-500">{formatDate(log.timestamp || log.created_at)}</span>
-                    </div>
-                    <p className="mt-3 text-sm text-gray-700 whitespace-pre-line">{log.content || log.message || 'بدون محتوى'}</p>
-                    {log.data && typeof log.data === 'object' && Object.keys(log.data).length > 0 && (
-                      <div className="mt-3 rounded-xl bg-white border border-gray-200 p-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">تفاصيل إضافية</div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {Object.entries(log.data).map(([key, value]) => (
-                            <div key={key} className="rounded-lg bg-gray-100 p-2">
-                              <div className="text-[11px] font-semibold text-gray-600">{key}</div>
-                              <div className="mt-1 text-sm text-gray-800 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
-                            </div>
-                          ))}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
+              <button
+                type="button"
+                onClick={toggleLogs}
+                className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                {showLogs ? 'إخفاء رسائل المهمة' : 'عرض رسائل ووكلاء المهمة'}
+              </button>
+            </div>
+
+            {showLogs && (
+              <div className="mt-4 space-y-3">
+                {logsLoading && <p className="text-sm text-gray-600">جاري جلب سجل الوكلاء...</p>}
+                {logsError && <p className="text-sm text-red-600">{logsError}</p>}
+                {!logsLoading && !logsError && taskLogs.length === 0 && (
+                  <p className="text-sm text-gray-500">لا توجد رسائل سجل متاحة بعد.</p>
+                )}
+                {!logsLoading && taskLogs.length > 0 && (
+                  <div className="space-y-3">
+                    {taskLogs.map((log, idx) => (
+                      <div key={idx} className={`rounded-2xl border p-4 ${getAgentCardClasses(log.agent)}`}>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start">
+                          <div>
+                            <div className="text-sm font-semibold text-gray-900">{getAgentLabel(log.agent)}</div>
+                            <div className="text-xs text-gray-500">{(log.type || '').toUpperCase()}</div>
+                          </div>
+                          <span className="text-xs text-gray-500">{formatDate(log.timestamp || log.created_at)}</span>
                         </div>
+                        <p className="mt-3 text-sm text-gray-700 whitespace-pre-line">{log.content || log.message || 'بدون محتوى'}</p>
+                        {log.data && typeof log.data === 'object' && Object.keys(log.data).length > 0 && (
+                          <div className="mt-3 rounded-xl bg-white border border-gray-200 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">تفاصيل إضافية</div>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {Object.entries(log.data).map(([key, value]) => (
+                                <div key={key} className="rounded-lg bg-gray-100 p-2">
+                                  <div className="text-[11px] font-semibold text-gray-600">{key}</div>
+                                  <div className="mt-1 text-sm text-gray-800 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
