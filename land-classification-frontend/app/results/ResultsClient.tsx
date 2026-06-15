@@ -141,15 +141,14 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
     if (!Array.isArray(ring[0]) || ring[0].length < 2) return [];
 
+    // تفترض الخريطة أن الباكند يعطي GeoJSON قياسيًا ([lon, lat]).
+    // نُبسّط المعالجة ونمسك بالإحداثيات كما هي لتجنّب قلب القيم الخاطئ.
     const normalizedRing = ring
       .filter((coord: any) => Array.isArray(coord) && coord.length >= 2)
       .map((coord: any) => {
         const [a, b] = coord;
         if (typeof a !== 'number' || typeof b !== 'number') return null;
-        if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && a < 90 && b > 90) {
-          return [b, a];
-        }
-        return coord;
+        return [a, b];
       })
       .filter((coord: any) => coord !== null);
 
