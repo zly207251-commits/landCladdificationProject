@@ -53,12 +53,21 @@ export default function MapViewer({
   const [tileLoadError, setTileLoadError] = useState<boolean>(false);
 
   const errorTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6GXo9kAAAAASUVORK5CYII=';
+  const fallbackTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAAP0lEQVR4Xu3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8FchDgAB/tzDEwAAAABJRU5ErkJggg==';
+
   const tileLayerOptions = {
     errorTileUrl,
     eventHandlers: {
       tileerror: () => setTileLoadError(true),
       tileload: () => setTileLoadError(false)
     }
+  };
+
+  const fallbackTileLayerOptions = {
+    tileSize: 256,
+    noWrap: true,
+    attribution: '',
+    url: fallbackTileUrl
   };
 
   const resetTileLoadError = () => {
@@ -248,6 +257,19 @@ export default function MapViewer({
               {layer}
             </LayersControl.BaseLayer>
           ))}
+
+          {/* طبقة بديلة تظهر عندما تفشل البلاطات الخارجية */}
+          {tileLoadError && (
+            <LayersControl.BaseLayer key="fallback" name="Fallback (فارغة)" checked>
+              <TileLayer
+                key="fallback-tile"
+                attribution=""
+                url={fallbackTileUrl}
+                tileSize={256}
+                noWrap={true}
+              />
+            </LayersControl.BaseLayer>
+          )}
 
           {/* طبقات البيانات */}
           <LayersControl.Overlay name="المعالم الجغرافية" checked>
