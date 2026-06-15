@@ -35,6 +35,8 @@ interface MapViewerProps {
   selectedFeature?: any;
   editMode?: boolean;
   useDefaultIcon?: boolean;
+  center?: [number, number] | null;
+  zoom?: number | null;
 }
 
 export default function MapViewer({ 
@@ -193,11 +195,14 @@ export default function MapViewer({
     )
   };
 
+  const mapCenter = center || MAP_CONFIG.defaultCenter;
+  const mapZoom = zoom || MAP_CONFIG.defaultZoom;
+
   return (
     <div className="relative h-full w-full">
       <MapContainer
-        center={MAP_CONFIG.defaultCenter}
-        zoom={MAP_CONFIG.defaultZoom}
+        center={mapCenter}
+        zoom={mapZoom}
         className="h-full w-full rounded-lg"
         ref={setMap}
         scrollWheelZoom={true}

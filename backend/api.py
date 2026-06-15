@@ -194,6 +194,62 @@ def get_task_report(task_id: str):
             "geo_polygons": ly["geo_polygons"]
         })
         
+    # Build GeoJSON FeatureCollection for frontend convenience
+    features = []
+    sum_lon = 0.0
+    sum_lat = 0.0
+    count_coords = 0
+    for ly in layers:
+        layer_name = ly.get('layer_name')
+        metadata = ly.get('metadata') or {}
+        geo_polygons = ly.get('geo_polygons') or []
+        for polygon in geo_polygons:
+            # polygon may be a ring or nested [[ring]]; normalize to ring
+            ring = polygon
+            if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                ring = polygon[0]
+
+            # ensure coordinates are [lon, lat] and closed
+            norm_ring = []
+            for pt in ring:
+                if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                    continue
+                lon = float(pt[0])
+                lat = float(pt[1])
+                norm_ring.append([lon, lat])
+                sum_lon += lon
+                sum_lat += lat
+                count_coords += 1
+
+            if len(norm_ring) >= 3:
+                # close ring
+                if norm_ring[0] != norm_ring[-1]:
+                    norm_ring.append(norm_ring[0])
+
+                feature = {
+                    "type": "Feature",
+                    "properties": {
+                        "name": layer_name,
+                        "layer_name": layer_name,
+                        "metadata": metadata
+                    },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [norm_ring]
+                    }
+                }
+                features.append(feature)
+
+    geojson = {"type": "FeatureCollection", "features": features}
+    map_center = None
+    map_zoom = None
+    if count_coords > 0:
+        avg_lon = sum_lon / count_coords
+        avg_lat = sum_lat / count_coords
+        # MapViewer/Leaflet expects [lat, lon] for center
+        map_center = [avg_lat, avg_lon]
+        map_zoom = 17
+
     return {
         "task_id": task_id,
         "status": task["status"],
@@ -202,7 +258,10 @@ def get_task_report(task_id: str):
         "image_path": task["image_path"],
         "image_url": f"/tasks/{task_id}/image",
         "metadata": task["metadata"],
-        "layers": report_layers
+        "layers": report_layers,
+        "geojson": geojson,
+        "map_center": map_center,
+        "map_zoom": map_zoom
     }
 
 @app.get("/tasks/{task_id}/image", summary="4. جلب صورة المهمة الأصلية")
@@ -307,3 +366,4 @@ async def segment_image(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    

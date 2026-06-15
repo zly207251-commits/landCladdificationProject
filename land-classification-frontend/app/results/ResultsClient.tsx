@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from 'next/dynamic';
 import Link from "next/link";
 import { API_CONFIG } from "@/app/lib/map-config";
 import ExportCenter from "@/app/components/ExportCenter";
 import AuditInterface from "@/app/components/AuditInterface";
+
+const MapViewer = dynamic(() => import('@/app/components/MapViewer'), { ssr: false });
 
 interface ResultsClientProps {
   taskId: string;
@@ -237,6 +240,16 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800 mb-4">نتائج المهمة</h1>
+
+      {/* خريطة المهمة */}
+      {report?.geojson && (
+        <div className="bg-white p-4 rounded-lg shadow mb-6" style={{ height: 360 }}>
+          <h3 className="font-semibold text-lg mb-2">خريطة نتيجة المهمة</h3>
+          <div className="h-[300px] rounded-lg overflow-hidden">
+            <MapViewer geojsonData={report.geojson} center={report.map_center} zoom={report.map_zoom} />
+          </div>
+        </div>
+      )}
 
       {loading && <p className="text-sm text-gray-600">جاري جلب التقرير...</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
