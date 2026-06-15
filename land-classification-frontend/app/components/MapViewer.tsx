@@ -49,33 +49,59 @@ export default function MapViewer({
   zoom = null
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
-  const [layers, setLayers] = useState<any[]>([]);
   const [tileLoadError, setTileLoadError] = useState<boolean>(false);
+  const [useFallbackTiles, setUseFallbackTiles] = useState<boolean>(false);
+  const [activeTileSourceIndex, setActiveTileSourceIndex] = useState<number>(0);
 
   const errorTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6GXo9kAAAAASUVORK5CYII=';
   const fallbackTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAAP0lEQVR4Xu3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8FchDgAB/tzDEwAAAABJRU5ErkJggg==';
 
+  const tileSources = [
+    {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    },
+    {
+      url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+      attribution: '&copy; <a href="https://www.openstreetmap.fr/">OpenStreetMap France</a> contributors'
+    },
+    {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
+    }
+  ];
+
+  const currentTileSource = tileSources[activeTileSourceIndex] || tileSources[0];
+
   const tileLayerOptions = {
     errorTileUrl,
     eventHandlers: {
-      tileerror: () => setTileLoadError(true),
+      tileerror: () => {
+        if (activeTileSourceIndex < tileSources.length - 1) {
+          setActiveTileSourceIndex(activeTileSourceIndex + 1);
+        } else {
+          setTileLoadError(true);
+          setUseFallbackTiles(true);
+        }
+      },
       tileload: () => setTileLoadError(false)
     }
   };
 
-  const fallbackTileLayerOptions = {
-    tileSize: 256,
-    noWrap: true,
-    attribution: '',
-    url: fallbackTileUrl
-  };
-
   const resetTileLoadError = () => {
     setTileLoadError(false);
+    setUseFallbackTiles(false);
+    setActiveTileSourceIndex(0);
     if (map) {
       map.invalidateSize();
     }
   };
+
+  useEffect(() => {
+    if (map) {
+      map.invalidateSize();
+    }
+  }, [map, activeTileSourceIndex, useFallbackTiles]);
 
   // تعيين الأيقونة الافتراضية
   useEffect(() => {
@@ -247,31 +273,19 @@ export default function MapViewer({
         center={mapCenter}
         zoom={mapZoom}
         className="h-full w-full rounded-lg"
-        ref={setMap}
+        whenCreated={setMap}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
       >
+        <TileLayer
+          attribution={useFallbackTiles ? '' : currentTileSource.attribution}
+          url={useFallbackTiles ? fallbackTileUrl : currentTileSource.url}
+          tileSize={256}
+          noWrap={useFallbackTiles}
+          {...tileLayerOptions}
+        />
+
         <LayersControl position="topright">
-          {Object.entries(baseLayers).map(([name, layer], index) => (
-            <LayersControl.BaseLayer key={name} name={name} checked={index === 0}>
-              {layer}
-            </LayersControl.BaseLayer>
-          ))}
-
-          {/* طبقة بديلة تظهر عندما تفشل البلاطات الخارجية */}
-          {tileLoadError && (
-            <LayersControl.BaseLayer key="fallback" name="Fallback (فارغة)" checked>
-              <TileLayer
-                key="fallback-tile"
-                attribution=""
-                url={fallbackTileUrl}
-                tileSize={256}
-                noWrap={true}
-              />
-            </LayersControl.BaseLayer>
-          )}
-
-          {/* طبقات البيانات */}
           <LayersControl.Overlay name="المعالم الجغرافية" checked>
             {renderGeoJSON()}
           </LayersControl.Overlay>

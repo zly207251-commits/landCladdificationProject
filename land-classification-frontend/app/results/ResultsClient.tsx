@@ -377,7 +377,16 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="font-semibold text-lg mb-4">أدوات التصدير والتدقيق للمهمة السابقة</h3>
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="grid gap-6">
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
+                <AuditInterface
+                  initialFeatures={taskFeatures}
+                  onSaveCorrections={(corrections) => {
+                    console.log('Saved corrections for previous task:', corrections);
+                  }}
+                />
+              </div>
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
                 <h4 className="font-semibold mb-3">تصدير المهمة</h4>
                 <ExportCenter
@@ -386,15 +395,6 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                   reportData={report}
                   onExport={() => {
                     // يمكن توسيع السلوك لاحقًا
-                  }}
-                />
-              </div>
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
-                <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
-                <AuditInterface
-                  initialFeatures={taskFeatures}
-                  onSaveCorrections={(corrections) => {
-                    console.log('Saved corrections for previous task:', corrections);
                   }}
                 />
               </div>
