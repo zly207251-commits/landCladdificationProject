@@ -50,6 +50,23 @@ export default function MapViewer({
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
   const [layers, setLayers] = useState<any[]>([]);
+  const [tileLoadError, setTileLoadError] = useState<boolean>(false);
+
+  const errorTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6GXo9kAAAAASUVORK5CYII=';
+  const tileLayerOptions = {
+    errorTileUrl,
+    eventHandlers: {
+      tileerror: () => setTileLoadError(true),
+      tileload: () => setTileLoadError(false)
+    }
+  };
+
+  const resetTileLoadError = () => {
+    setTileLoadError(false);
+    if (map) {
+      map.invalidateSize();
+    }
+  };
 
   // تعيين الأيقونة الافتراضية
   useEffect(() => {
@@ -172,13 +189,14 @@ export default function MapViewer({
     );
   };
 
-  // إضافة طبقات OSM
+  // إضافة طبقات OSM مع فشل آمن في تحميل البلاطات
   const baseLayers = {
     "الخريطة العادية": (
       <TileLayer
         key="osm"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        {...tileLayerOptions}
       />
     ),
     "الخريطة الجغرافية": (
@@ -186,6 +204,7 @@ export default function MapViewer({
         key="topo"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+        {...tileLayerOptions}
       />
     ),
     "صور الأقمار الصناعية": (
@@ -193,6 +212,7 @@ export default function MapViewer({
         key="satellite"
         attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        {...tileLayerOptions}
       />
     )
   };
@@ -202,6 +222,18 @@ export default function MapViewer({
 
   return (
     <div className="relative h-full w-full">
+      {tileLoadError && (
+        <div className="absolute inset-4 z-[1001] rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700 shadow-md">
+          <strong>تعذر الاتصال بخدمة الخرائط.</strong>
+          <div>يرجى التحقق من الإنترنت أو تجربة إعادة تحميل الصفحة.</div>
+          <button
+            onClick={resetTileLoadError}
+            className="mt-3 inline-flex items-center rounded-md bg-white px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-50"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
