@@ -44,7 +44,9 @@ export default function MapViewer({
   onPolygonClick, 
   selectedFeature,
   editMode = false,
-  useDefaultIcon = true 
+  useDefaultIcon = true,
+  center = null,
+  zoom = null
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
   const [layers, setLayers] = useState<any[]>([]);
