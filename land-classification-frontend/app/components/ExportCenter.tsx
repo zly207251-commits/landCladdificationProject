@@ -22,6 +22,8 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
     'buildings', 'roads', 'water_bodies', 'vegetation', 'bare_land',
     'agricultural', 'forest', 'mountainous', 'residential', 'commercial'
   ];
+  // إزالة التكرارات للحفاظ على مفاتيح فريدة
+  const uniqueLayers = Array.from(new Set(allLayers));
 
   // توليد محتوى GeoJSON من البيانات
   const buildGeoJSON = (layers: any[]) => {
@@ -171,9 +173,9 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
 
   const toggleAllLayers = () => {
     setSelectedLayers(prev => 
-      prev.length === allLayers.length
+      prev.length === uniqueLayers.length
         ? []
-        : [...allLayers]
+        : [...uniqueLayers]
     );
   };
 
@@ -290,12 +292,12 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
               onClick={toggleAllLayers}
               className="text-sm text-blue-600 hover:text-blue-800 font-medium"
             >
-              {selectedLayers.length === allLayers.length ? 'إلغاء الكل' : 'تحديد الكل'}
+              {selectedLayers.length === uniqueLayers.length ? 'إلغاء الكل' : 'تحديد الكل'}
             </button>
           </div>
 
           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-            {allLayers.map((layer) => {
+            {uniqueLayers.map((layer, idx) => {
               const layerNames: Record<string, string> = {
                 buildings: 'المباني',
                 roads: 'الطرق',
@@ -311,7 +313,7 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
 
               return (
                 <div
-                  key={layer}
+                  key={`${layer}-${idx}`}
                   onClick={() => toggleLayer(layer)}
                   className={`p-3 rounded-lg border cursor-pointer transition-all ${
                     selectedLayers.includes(layer)
@@ -347,7 +349,7 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
           </div>
 
           {/* إحصائيات التصدير */}
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
             <h4 className="font-semibold text-gray-800 mb-2">📊 إحصائيات التصدير</h4>
             <div className="grid grid-cols-2 gap-3">
               <div className="text-center p-3 bg-white rounded border">
