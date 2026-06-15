@@ -382,6 +382,8 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                 <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
                 <AuditInterface
                   initialFeatures={taskFeatures}
+                  center={report.map_center ?? null}
+                  zoom={report.map_zoom ?? null}
                   onSaveCorrections={(corrections) => {
                     console.log('Saved corrections for previous task:', corrections);
                   }}

@@ -8,9 +8,11 @@ import { LAYER_STYLES } from '@/app/lib/map-config';
 interface AuditInterfaceProps {
   initialFeatures?: any[];
   onSaveCorrections?: (corrections: any[]) => void;
+  center?: [number, number] | null;
+  zoom?: number | null;
 }
 
-export default function AuditInterface({ initialFeatures = [], onSaveCorrections }: AuditInterfaceProps) {
+export default function AuditInterface({ initialFeatures = [], onSaveCorrections, center = null, zoom = null }: AuditInterfaceProps) {
   const [selectedFeature, setSelectedFeature] = useState<any>(null);
   const [corrections, setCorrections] = useState<any[]>([]);
   const [features, setFeatures] = useState<any[]>(initialFeatures);
@@ -227,6 +229,8 @@ export default function AuditInterface({ initialFeatures = [], onSaveCorrections
               onPolygonClick={handleFeatureClick}
               selectedFeature={selectedFeature}
               editMode={true}
+              center={center}
+              zoom={zoom}
             />
           </div>
 
