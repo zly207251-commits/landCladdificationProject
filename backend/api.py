@@ -213,6 +213,22 @@ def get_task_image(task_id: str):
     image_path = task["image_path"]
     if not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="الصورة غير موجودة على الخادم.")
+    _, ext = os.path.splitext(image_path)
+    ext = ext.lower()
+    if ext in ['.tif', '.tiff', '.geotiff']:
+        try:
+            image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise ValueError("تعذر قراءة الصورة الجغرافية")
+            if len(image.shape) == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            elif image.shape[2] == 4:
+                image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            _, buffer = cv2.imencode('.png', image)
+            return StreamingResponse(io.BytesIO(buffer.tobytes()), media_type='image/png')
+        except Exception:
+            return FileResponse(image_path, filename=os.path.basename(image_path))
+
     return FileResponse(image_path, filename=os.path.basename(image_path))
 
 @app.get("/tasks/{task_id}/logs", summary="5. جلب السجل الحقيقي للمراسلات بين الوكلاء")

@@ -103,7 +103,7 @@ class ProjectionAgent(BaseAgent):
                     dy = -pt[1] * pixel_scale
                     point_lat = ref_lat + (dy * lat_scale)
                     point_lon = ref_lon + (dx * lon_scale)
-                    geo_poly.append([point_lat, point_lon])
+                    geo_poly.append([point_lon, point_lat])
 
             feddan, qirat, sahm = self._convert_to_agricultural_units(area_sqm)
 
@@ -147,7 +147,7 @@ class ProjectionAgent(BaseAgent):
         col, row = pt[0], pt[1]
         x = a * col + b * row + c
         y = d * col + e * row + f
-        return [float(y), float(x)]
+        return [float(x), float(y)]
 
     def _convert_to_agricultural_units(self, area_sqm: float) -> Tuple[int, int, float]:
         """دالة مساعدة لتحويل الأمتار المربعة إلى فدان، قيراط، وسهم."""
