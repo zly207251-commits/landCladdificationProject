@@ -15,8 +15,6 @@ export default function Home() {
 
   // معالجة اكتمال الرفع
   const handleUploadComplete = (fileInfo: any) => {
-    setUploadedFile(fileInfo);
-    // backend returns { task_id }
     const tid = fileInfo?.task_id || fileInfo?.taskId || fileInfo?.fileId;
     setJobId(tid || null);
     setAppState('processing');

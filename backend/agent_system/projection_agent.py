@@ -51,7 +51,26 @@ class ProjectionAgent(BaseAgent):
             content=f"معايير الإسقاط المعتمدة: مقياس الرسم = {pixel_scale} متر/بكسل، الإحداثي المرجعي = ({ref_lat}, {ref_lon})"
         )
 
-        image = cv2.imread(image_path)
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if image is None and rasterio is not None:
+            try:
+                with rasterio.open(image_path) as ds:
+                    bands = ds.read()
+                    if bands.ndim == 3:
+                        if bands.shape[0] >= 3:
+                            image = np.stack([bands[0], bands[1], bands[2]], axis=-1)
+                        else:
+                            image = np.transpose(bands, (1, 2, 0))
+                    else:
+                        image = bands
+                    image = np.asarray(image, dtype=np.uint8)
+                    if image.ndim == 2:
+                        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+                    elif image.shape[2] == 4:
+                        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+            except Exception:
+                image = None
+
         if image is None:
             self.message_bus.publish(
                 task_id=task_id,
