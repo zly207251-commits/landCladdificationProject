@@ -102,6 +102,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
   const processedImageSrc = report?.processed_image_url ? `${API_CONFIG.baseURL}${report.processed_image_url}` : null;
+  const globeViewerLink = report?.task_id ? `/globe?task_id=${report.task_id}` : null;
 
   const classificationMeta: Record<string, { icon: string; label: string; color: string }> = {
     class_name: { icon: '🏷️', label: 'التسمية', color: 'bg-blue-50 text-blue-700' },
@@ -203,6 +204,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   }) || [];
 
   const availableLayerNames = report?.layers?.map((ly: any) => ly.layer_name) || [];
+  const globeViewerLink = report?.task_id ? `/globe?task_id=${report.task_id}` : null;
 
   const formatDate = (value: string | undefined) => {
     if (!value) return '-';
@@ -307,6 +309,14 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                   >
                     عرض الصور في صفحة منفصلة
                   </button>
+                )}
+                {globeViewerLink && (
+                  <a
+                    href={globeViewerLink}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                  >
+                    عرض المهمة في Globe
+                  </a>
                 )}
                 <button
                   type="button"

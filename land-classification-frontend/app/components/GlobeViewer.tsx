@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { API_CONFIG } from "@/app/lib/map-config";
 
 const CESIUM_JS = "https://cesium.com/downloads/cesiumjs/releases/1.129/Build/Cesium/Cesium.js";
 const CESIUM_CSS = "https://cesium.com/downloads/cesiumjs/releases/1.129/Build/Cesium/Widgets/widgets.css";
@@ -86,7 +87,8 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         if (taskId) {
           setStatusMessage("تحميل طبقة المعالم للمهمة...");
           try {
-            const response = await fetch(`/tasks/${taskId}/report`);
+            const reportUrl = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`;
+            const response = await fetch(reportUrl);
             if (response.ok) {
               const taskReport = await response.json();
               if (taskReport.geojson) {
