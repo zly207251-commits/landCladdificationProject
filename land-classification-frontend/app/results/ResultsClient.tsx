@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_CONFIG } from "@/app/lib/map-config";
 import ExportCenter from "@/app/components/ExportCenter";
@@ -18,8 +19,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState<boolean>(false);
-  const [showOriginalImage, setShowOriginalImage] = useState<boolean>(false);
-  const [showProcessedImage, setShowProcessedImage] = useState<boolean>(false);
+  const router = useRouter();
 
   const AGENT_LABELS: Record<string, string> = {
     COORDINATOR: 'وكيل المنسق',
@@ -299,22 +299,15 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
               <div className="flex flex-wrap gap-3">
-                {processedImageSrc && (
+                {(imageSrc || processedImageSrc) && (
                   <button
                     type="button"
-                    onClick={() => setShowProcessedImage((prev) => !prev)}
-                    className="rounded-full border border-green-300 bg-green-50 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-100"
+                    onClick={() => router.push(`/results/images?task_id=${taskId}`)}
+                    className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
                   >
-                    {showProcessedImage ? 'إخفاء الصورة النهائية' : 'عرض الصورة النهائية'}
+                    عرض الصور في صفحة منفصلة
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setShowOriginalImage((prev) => !prev)}
-                  className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
-                >
-                  {showOriginalImage ? 'إخفاء الصورة الأصلية' : 'عرض الصورة الأصلية'}
-                </button>
                 <button
                   type="button"
                   onClick={toggleLogs}
@@ -395,17 +388,6 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          {showProcessedImage && processedImageSrc && (
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="font-semibold text-lg mb-4">الصورة النهائية بعد التعديل</h3>
-              <img
-                src={processedImageSrc}
-                alt="الصورة النهائية للمهمة"
-                className="w-full rounded-lg border border-gray-200 object-contain"
-              />
-            </div>
-          )}
-
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="font-semibold text-lg mb-4">أدوات التصدير والتدقيق للمهمة السابقة</h3>
             <div className="grid gap-6">
@@ -434,16 +416,6 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          {showOriginalImage && imageSrc && (
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="font-semibold text-lg mb-4">الصورة المرفوعة للمهمة</h3>
-              <img
-                src={imageSrc}
-                alt="صورة المهمة"
-                className="w-full rounded-lg border border-gray-200 object-contain"
-              />
-            </div>
-          )}
         </div>
       )}
     </div>
