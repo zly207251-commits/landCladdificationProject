@@ -19,6 +19,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [logsError, setLogsError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState<boolean>(false);
   const [showOriginalImage, setShowOriginalImage] = useState<boolean>(false);
+  const [showProcessedImage, setShowProcessedImage] = useState<boolean>(false);
 
   const AGENT_LABELS: Record<string, string> = {
     COORDINATOR: 'وكيل المنسق',
@@ -100,6 +101,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   };
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
+  const processedImageSrc = report?.processed_image_url ? `${API_CONFIG.baseURL}${report.processed_image_url}` : null;
 
   const classificationMeta: Record<string, { icon: string; label: string; color: string }> = {
     class_name: { icon: '🏷️', label: 'التسمية', color: 'bg-blue-50 text-blue-700' },
@@ -297,6 +299,15 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
               <div className="flex flex-wrap gap-3">
+                {processedImageSrc && (
+                  <button
+                    type="button"
+                    onClick={() => setShowProcessedImage((prev) => !prev)}
+                    className="rounded-full border border-green-300 bg-green-50 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-100"
+                  >
+                    {showProcessedImage ? 'إخفاء الصورة النهائية' : 'عرض الصورة النهائية'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowOriginalImage((prev) => !prev)}
@@ -383,6 +394,17 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
               </table>
             </div>
           </div>
+
+          {showProcessedImage && processedImageSrc && (
+            <div className="bg-white p-6 rounded-lg shadow">
+              <h3 className="font-semibold text-lg mb-4">الصورة النهائية بعد التعديل</h3>
+              <img
+                src={processedImageSrc}
+                alt="الصورة النهائية للمهمة"
+                className="w-full rounded-lg border border-gray-200 object-contain"
+              />
+            </div>
+          )}
 
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="font-semibold text-lg mb-4">أدوات التصدير والتدقيق للمهمة السابقة</h3>

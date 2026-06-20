@@ -62,6 +62,7 @@ class ProjectionAgent(BaseAgent):
             memory.update_task_status(task_id, "FAILED")
             return {"next_agent": "end"}
 
+        original_image = image.copy()
         self.message_bus.publish(
             task_id=task_id,
             sender=self.name,
@@ -119,6 +120,7 @@ class ProjectionAgent(BaseAgent):
                 metadata={"description": "قطعة أرض مستخرجة بواسطة SAM", "pixel_scale": pixel_scale}
             )
 
+            cv2.polylines(original_image, [np.array(poly, dtype=np.int32)], True, (0, 0, 255), 3)
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
@@ -128,6 +130,26 @@ class ProjectionAgent(BaseAgent):
                     f"{feddan} فدان، {qirat} قيراط، {sahm:.2f} سهم."
                 ),
                 payload={"layer_name": "lands", "area_sq_meters": area_sqm}
+            )
+
+        processed_path = None
+        try:
+            processed_filename = f"{task_id}_processed.png"
+            processed_path = os.path.join(os.path.dirname(image_path), processed_filename)
+            cv2.imwrite(processed_path, original_image)
+            memory.update_task_processed_image(task_id, processed_path)
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content=f"تم حفظ الصورة النهائية المعالجة: {processed_filename}"
+            )
+        except Exception as err:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content=f"تعذر حفظ الصورة النهائية المعالجة: {str(err)}"
             )
 
         self.message_bus.publish(
