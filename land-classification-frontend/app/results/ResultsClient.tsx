@@ -204,7 +204,6 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   }) || [];
 
   const availableLayerNames = report?.layers?.map((ly: any) => ly.layer_name) || [];
-  const globeViewerLink = report?.task_id ? `/globe?task_id=${report.task_id}` : null;
 
   const formatDate = (value: string | undefined) => {
     if (!value) return '-';
