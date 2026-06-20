@@ -11,7 +11,6 @@ type AppState = 'upload' | 'processing';
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('upload');
   const [jobId, setJobId] = useState<string | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<any>(null);
   const router = useRouter();
 
   // معالجة اكتمال الرفع

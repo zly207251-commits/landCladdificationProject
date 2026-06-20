@@ -18,6 +18,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState<boolean>(false);
+  const [showOriginalImage, setShowOriginalImage] = useState<boolean>(false);
 
   const AGENT_LABELS: Record<string, string> = {
     COORDINATOR: 'وكيل المنسق',
@@ -295,13 +296,22 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
           <div className="bg-white p-6 rounded-lg shadow">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
-              <button
-                type="button"
-                onClick={toggleLogs}
-                className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-              >
-                {showLogs ? 'إخفاء رسائل المهمة' : 'عرض رسائل ووكلاء المهمة'}
-              </button>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowOriginalImage((prev) => !prev)}
+                  className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
+                >
+                  {showOriginalImage ? 'إخفاء الصورة الأصلية' : 'عرض الصورة الأصلية'}
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleLogs}
+                  className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  {showLogs ? 'إخفاء رسائل المهمة' : 'عرض رسائل ووكلاء المهمة'}
+                </button>
+              </div>
             </div>
 
             {showLogs && (
@@ -402,7 +412,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          {imageSrc && (
+          {showOriginalImage && imageSrc && (
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="font-semibold text-lg mb-4">الصورة المرفوعة للمهمة</h3>
               <img
