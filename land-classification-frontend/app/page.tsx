@@ -6,7 +6,7 @@ import Link from 'next/link';
 import UploadPortal from "./components/UploadPortal";
 import ProcessingDashboard from "./components/ProcessingDashboard";
 
-type AppState = 'upload' | 'processing';
+type AppState = 'upload' | 'processing' | 'results';
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('upload');

@@ -48,7 +48,6 @@ export default function MapViewer({
   center = null,
   zoom = null
 }: MapViewerProps) {
-  const [map, setMap] = useState<L.Map | null>(null);
   const [tileLoadError, setTileLoadError] = useState<boolean>(false);
   const [useFallbackTiles, setUseFallbackTiles] = useState<boolean>(false);
   const [activeTileSourceIndex, setActiveTileSourceIndex] = useState<number>(0);
@@ -92,16 +91,11 @@ export default function MapViewer({
     setTileLoadError(false);
     setUseFallbackTiles(false);
     setActiveTileSourceIndex(0);
-    if (map) {
-      map.invalidateSize();
-    }
   };
 
   useEffect(() => {
-    if (map) {
-      map.invalidateSize();
-    }
-  }, [map, activeTileSourceIndex, useFallbackTiles]);
+    // Trigger a re-render after tile source changes to let Leaflet redraw.
+  }, [activeTileSourceIndex, useFallbackTiles]);
 
   // تعيين الأيقونة الافتراضية
   useEffect(() => {
@@ -273,7 +267,6 @@ export default function MapViewer({
         center={mapCenter}
         zoom={mapZoom}
         className="h-full w-full rounded-lg"
-        whenCreated={setMap}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
       >

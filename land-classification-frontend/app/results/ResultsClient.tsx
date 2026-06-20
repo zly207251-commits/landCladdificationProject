@@ -160,6 +160,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
     const first = normalizedRing[0];
     const last = normalizedRing[normalizedRing.length - 1];
+    if (!first || !last) return [];
     if (first[0] !== last[0] || first[1] !== last[1]) {
       normalizedRing.push(first);
     }

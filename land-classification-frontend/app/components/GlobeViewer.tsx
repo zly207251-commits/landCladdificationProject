@@ -9,6 +9,29 @@ const CESIUM_CSS = "https://cesium.com/downloads/cesiumjs/releases/1.129/Build/C
 const NASA_GIBS_DEFAULT_LAYER = "MODIS_Terra_CorrectedReflectance_TrueColor";
 const NASA_GIBS_TILE_MATRIX = "GoogleMapsCompatible";
 
+const IMAGERY_PROVIDERS = [
+  {
+    id: 'osm',
+    label: 'OpenStreetMap',
+    description: 'خريطة الشوارع العالمية',
+  },
+  {
+    id: 'esri',
+    label: 'Esri World Imagery',
+    description: 'صور أقمار صناعية عالية الدقة',
+  },
+  {
+    id: 'gibs_truecolor',
+    label: 'NASA GIBS TrueColor',
+    description: 'صور الأقمار الصناعية NASA GIBS',
+  },
+  {
+    id: 'gibs_viirs',
+    label: 'NASA GIBS VIIRS',
+    description: 'صور الأقمار الصناعية VIIRS اليومية',
+  }
+];
+
 const loadCss = (href: string) => {
   if (document.querySelector(`link[href='${href}']`)) return;
   const link = document.createElement("link");
@@ -44,8 +67,45 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [lat, setLat] = useState(24.7136);
   const [lon, setLon] = useState(46.6753);
   const [date, setDate] = useState(formatDate(new Date()));
+  const [selectedProvider, setSelectedProvider] = useState<string>('esri');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
+
+  const createImageryProvider = (providerId: string) => {
+    const Cesium = (window as any).Cesium;
+    if (!Cesium) return null;
+
+    switch (providerId) {
+      case 'osm':
+        return new Cesium.OpenStreetMapImageryProvider({
+          url: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          credit: 'OpenStreetMap contributors',
+        });
+      case 'esri':
+        return new Cesium.UrlTemplateImageryProvider({
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          credit: 'Esri World Imagery',
+          maximumLevel: 19,
+        });
+      case 'gibs_truecolor':
+        return new Cesium.UrlTemplateImageryProvider({
+          url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${NASA_GIBS_DEFAULT_LAYER}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`,
+          credit: 'NASA GIBS',
+          maximumLevel: 8,
+        });
+      case 'gibs_viirs':
+        return new Cesium.UrlTemplateImageryProvider({
+          url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`,
+          credit: 'NASA GIBS VIIRS',
+          maximumLevel: 8,
+        });
+      default:
+        return new Cesium.OpenStreetMapImageryProvider({
+          url: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          credit: 'OpenStreetMap contributors',
+        });
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -53,14 +113,13 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       try {
         loadCss(CESIUM_CSS);
         await loadScript(CESIUM_JS);
-        if (!mounted || !containerRef.current || !window.Cesium) return;
+        if (!mounted || !containerRef.current || !(window as any).Cesium) return;
 
         const Cesium = (window as any).Cesium;
-        const imageryProvider = new Cesium.UrlTemplateImageryProvider({
-          url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`,
-          credit: "NASA GIBS",
-          maximumLevel: 8,
-        });
+        const imageryProvider = createImageryProvider(selectedProvider);
+        if (!imageryProvider) {
+          throw new Error('Unable to create imagery provider');
+        }
 
         viewerRef.current = new Cesium.Viewer(containerRef.current, {
           imageryProvider,
@@ -123,7 +182,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         setIsLoaded(true);
       } catch (error) {
         console.error(error);
-        setStatusMessage("فشل تحميل Cesium أو طبقة الـ GIBS.");
+        setStatusMessage("فشل تحميل Cesium أو طبقة العرض.");
       }
     };
 
@@ -137,15 +196,17 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [taskId]);
 
-  const updateImageryLayer = async () => {
+  const updateImageryLayer = () => {
     if (!viewerRef.current || !(window as any).Cesium) return;
     const Cesium = (window as any).Cesium;
-    const url = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
-    const imageryProvider = new Cesium.UrlTemplateImageryProvider({ url, credit: "NASA GIBS", maximumLevel: 8 });
+    const imageryProvider = createImageryProvider(selectedProvider);
+    if (!imageryProvider) return;
+
     const layers = viewerRef.current.imageryLayers;
     layers.removeAll();
     layers.addImageryProvider(imageryProvider);
-    setStatusMessage(`تم تحديث طبقة GIBS: ${selectedLayer}`);
+    const providerName = IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.label || 'Imagery';
+    setStatusMessage(`تم تحديث مصدر الصور إلى: ${providerName}`);
   };
 
   const flyToPoint = () => {
@@ -170,32 +231,36 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           </div>
           <div className="rounded-3xl bg-white p-5 shadow-lg space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700">تاريخ صور GIBS</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">طبقة العرض</label>
+              <label className="block text-sm font-medium text-slate-700">اختيار مصدر الصور</label>
               <select
-                value={selectedLayer}
-                onChange={(e) => setSelectedLayer(e.target.value)}
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
                 className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
               >
-                <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra TrueColor</option>
-                <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS SNPP TrueColor</option>
-                <option value="VIIRS_NOAA20_CorrectedReflectance_TrueColor">VIIRS NOAA20 TrueColor</option>
-                <option value="MODIS_Terra_CorrectedReflectance_TrueColor_TrueColor">MODIS Terra TrueColor (alt)</option>
+                {IMAGERY_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.label}</option>
+                ))}
               </select>
+              <p className="mt-2 text-xs text-slate-500">
+                {IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.description}
+              </p>
             </div>
+            {selectedProvider.startsWith('gibs') && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700">تاريخ صور GIBS</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            )}
             <button
               onClick={updateImageryLayer}
               className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-white font-semibold hover:bg-blue-700"
             >
-              تحديث طبقة GIBS
+              تحديث مصدر الصور
             </button>
           </div>
           <div className="rounded-3xl bg-white p-5 shadow-lg space-y-4">

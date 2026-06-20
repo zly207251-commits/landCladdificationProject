@@ -1,13 +1,7 @@
-"use client";
-
 import Link from "next/link";
-import GlobeViewer from "../components/GlobeViewer";
-import { useSearchParams } from "next/navigation";
+import GlobeViewerShell from "./GlobeViewerShell";
 
 export default function GlobePage() {
-  const searchParams = useSearchParams();
-  const taskId = searchParams?.get("task_id") || undefined;
-
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -36,7 +30,7 @@ export default function GlobePage() {
           </div>
 
           <div className="rounded-3xl bg-white p-0 shadow-lg overflow-hidden">
-            <GlobeViewer taskId={taskId} />
+            <GlobeViewerShell />
           </div>
         </section>
       </div>
