@@ -21,6 +21,11 @@ const IMAGERY_PROVIDERS = [
     description: 'صور أقمار صناعية عالية الدقة',
   },
   {
+    id: 'google',
+    label: 'Google Satellite',
+    description: 'Google Satellite عبر رابط غير رسمي للـ tiles',
+  },
+  {
     id: 'gibs_truecolor',
     label: 'NASA GIBS TrueColor',
     description: 'صور الأقمار الصناعية NASA GIBS',
@@ -67,7 +72,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [lat, setLat] = useState(24.7136);
   const [lon, setLon] = useState(46.6753);
   const [date, setDate] = useState(formatDate(new Date()));
-  const [selectedProvider, setSelectedProvider] = useState<string>('esri');
+  const [selectedProvider, setSelectedProvider] = useState<string>('google');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
 
@@ -86,6 +91,12 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
           credit: 'Esri World Imagery',
           maximumLevel: 19,
+        });
+      case 'google':
+        return new Cesium.UrlTemplateImageryProvider({
+          url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+          credit: 'Google Satellite',
+          maximumLevel: 20,
         });
       case 'gibs_truecolor':
         return new Cesium.UrlTemplateImageryProvider({
