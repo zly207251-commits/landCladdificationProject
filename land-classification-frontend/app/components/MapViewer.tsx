@@ -257,6 +257,25 @@ export default function MapViewer({
 
   return (
     <div className="relative h-full w-full">
+      {/* زر لفتح الطبقات الحالية في عرض Cesium (يفتح في نافذة جديدة) */}
+      <div className="absolute top-4 left-4 z-[1002]">
+        <button
+          onClick={() => {
+            if (!geojsonData) return alert('لا توجد بيانات لفتحها في Cesium');
+            try {
+              const encoded = encodeURIComponent(JSON.stringify(geojsonData));
+              const assetId = process.env.NEXT_PUBLIC_CESIUM_ASSET_ID;
+              const url = assetId ? `/cesium?geojson=${encoded}&assetId=${assetId}` : `/cesium?geojson=${encoded}`;
+              window.open(url, '_blank');
+            } catch (e) {
+              alert('فشل تجهيز البيانات للفرونت: ' + e);
+            }
+          }}
+          className="inline-flex items-center rounded-md bg-yellow-100 px-3 py-2 text-xs font-semibold text-yellow-800 ring-1 ring-yellow-200 hover:bg-yellow-200"
+        >
+          🛰️ افتح في Cesium
+        </button>
+      </div>
       {tileLoadError && (
         <div className="absolute inset-4 z-[1001] rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700 shadow-md">
           <strong>تعذر الاتصال بخدمة الخرائط.</strong>

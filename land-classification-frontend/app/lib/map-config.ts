@@ -94,7 +94,7 @@ export const PROCESSING_STAGES = {
 
 // إعدادات API (جاهزة للربط)
 export const API_CONFIG = {
-  baseURL: process.env.NEXT_PUBLIC_API_URL || '/api',
+  baseURL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '/api',
   endpoints: {
     // Backend agent swarm endpoints
     upload: '/tasks/analyze',

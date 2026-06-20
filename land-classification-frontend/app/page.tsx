@@ -51,6 +51,7 @@ export default function Home() {
           <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
             🤖 نظام فريق الوكلاء
           </span>
+            <a href="/cesium" className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">🛰️ Cesium Viewer</a>
           <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
             🔄 Human-in-the-Loop
           </span>
