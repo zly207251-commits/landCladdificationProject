@@ -5,20 +5,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UploadPortal from "./components/UploadPortal";
 import ProcessingDashboard from "./components/ProcessingDashboard";
-import dynamic from 'next/dynamic';
-import { useEffect } from 'react';
-
-// MapViewer is client-only and uses leaflet; load dynamically
-const MapViewer = dynamic(() => import('./components/MapViewer'), { ssr: false });
 
 type AppState = 'upload' | 'processing';
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('upload');
   const [jobId, setJobId] = useState<string | null>(null);
-  const [mapGeojson, setMapGeojson] = useState<any | undefined>(undefined);
-  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
-  const [mapZoom, setMapZoom] = useState<number | null>(null);
   const router = useRouter();
 
   // معالجة اكتمال الرفع
@@ -42,39 +34,6 @@ export default function Home() {
     setJobId(null);
     setAppState('upload');
   };
-
-  // جلب أحدث مهمة وعرض مضلعاتها على الخريطة
-  useEffect(() => {
-    let mounted = true;
-    async function loadLatest() {
-      try {
-        const res = await fetch('/tasks?limit=5');
-        if (!res.ok) return;
-        const data = await res.json();
-        const tasks = data?.tasks || [];
-        if (!tasks.length) return;
-
-        // اختر أول مهمة موجودة (الأحدث)
-        const latest = tasks[0];
-        const tid = latest.task_id;
-        if (!tid) return;
-
-        const rep = await fetch(`/tasks/${tid}/report`);
-        if (!rep.ok) return;
-        const repJson = await rep.json();
-        if (!mounted) return;
-
-        if (repJson.geojson) setMapGeojson(repJson.geojson);
-        if (repJson.map_center) setMapCenter(repJson.map_center as [number, number]);
-        if (repJson.map_zoom) setMapZoom(repJson.map_zoom as number);
-      } catch (err) {
-        // silent
-        console.warn('Failed to load latest task for map', err);
-      }
-    }
-    loadLatest();
-    return () => { mounted = false; };
-  }, []);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-4 md:p-8">
@@ -115,14 +74,22 @@ export default function Home() {
         </div>
       </div>
 
-      {/* خريطة تفاعلية تظهر المعالم الأحدث */}
-      <div className="max-w-7xl mx-auto mb-8 h-96">
-        <div className="h-full bg-white rounded-3xl shadow-lg p-2">
-          <MapViewer
-            geojsonData={mapGeojson}
-            center={mapCenter}
-            zoom={mapZoom}
-          />
+      <div className="max-w-7xl mx-auto mb-8">
+        <div className="grid gap-6 lg:grid-cols-[1fr,0.7fr]">
+          <div className="rounded-3xl bg-white p-6 shadow-lg">
+            <h2 className="text-2xl font-semibold text-slate-900 mb-3">عرض Globe مستقل</h2>
+            <p className="text-slate-600 leading-relaxed">
+              يمكنك فتح صفحة عرض ثلاثية الأبعاد شبيهة بـ Google Earth باستخدام NASA GIBS وطبقات المعالم.
+            </p>
+          </div>
+          <div className="rounded-3xl bg-white p-6 shadow-lg flex items-center justify-center">
+            <a
+              href="/globe"
+              className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-white text-base font-semibold transition hover:bg-blue-700"
+            >
+              افتح عارض Globe مستقل
+            </a>
+          </div>
         </div>
       </div>
 
