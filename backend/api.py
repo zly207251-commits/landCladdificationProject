@@ -9,6 +9,7 @@ import uuid
 import os
 import mimetypes
 import importlib.util
+from PIL import Image
 
 rasterio_spec = importlib.util.find_spec('rasterio')
 rasterio = importlib.import_module('rasterio') if rasterio_spec is not None else None
@@ -45,6 +46,37 @@ segmenter = LandSegmenterSAM()
 # إنشاء مجلد مؤقت لحفظ الصور المرفوعة للتحليل
 UPLOAD_DIR = "temp_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/save_map_tiff", summary="حفظ صورة الخريطة كـ TIFF")
+async def save_map_tiff(file: UploadFile = File(...), filename: str | None = Form(None)):
+    """
+    يستقبل ملف صورة (PNG/JPEG) عبر Multipart Form، يحولها إلى TIFF ويخزنها مؤقتاً ثم يعيد رابط التحميل.
+    """
+    try:
+        content = await file.read()
+        img = Image.open(io.BytesIO(content)).convert('RGBA')
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"تعذر قراءة ملف الصورة: {str(e)}")
+
+    out_name = filename or f"map_capture_{uuid.uuid4().hex[:8]}.tiff"
+    out_path = os.path.join(UPLOAD_DIR, out_name)
+
+    try:
+        # حفظ كـ TIFF (غير مضغوط افتراضياً)
+        img.save(out_path, format='TIFF')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل حفظ الصورة كـ TIFF: {str(e)}")
+
+    return {"message": "تم الحفظ كـ TIFF بنجاح", "filename": out_name, "path": out_path, "download_url": f"/map_exports/{out_name}"}
+
+
+@app.get('/map_exports/{fname}', summary='تحميل ملف صادر')
+def download_map_export(fname: str):
+    path = os.path.join(UPLOAD_DIR, fname)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail='الملف غير موجود')
+    return FileResponse(path, filename=fname)
 
 
 def get_geotiff_metadata(path: str):

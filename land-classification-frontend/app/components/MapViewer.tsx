@@ -5,6 +5,8 @@ import { MapContainer, TileLayer, LayersControl, GeoJSON, Polygon, Popup } from 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_CONFIG, LAYER_STYLES } from '@/app/lib/map-config';
+import html2canvas from 'html2canvas';
+import axios from 'axios';
 
 // إصلاح أيقونات Leaflet - استخدام SVG مدمج
 const createCustomIcon = () => {
@@ -49,6 +51,10 @@ export default function MapViewer({
   zoom = null
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
+  const [selecting, setSelecting] = useState<boolean>(false);
+  const [startLatLng, setStartLatLng] = useState<L.LatLng | null>(null);
+  const [rectLayer, setRectLayer] = useState<L.Rectangle | null>(null);
+  const [exportLink, setExportLink] = useState<string | null>(null);
   const [tileLoadError, setTileLoadError] = useState<boolean>(false);
   const [useFallbackTiles, setUseFallbackTiles] = useState<boolean>(false);
   const [activeTileSourceIndex, setActiveTileSourceIndex] = useState<number>(0);
@@ -97,11 +103,63 @@ export default function MapViewer({
     }
   };
 
+  // أحداث الفأرة لاختيار المستطيل
+  useEffect(() => {
+    if (!map) return;
+
+    const onMouseDown = (ev: L.LeafletMouseEvent) => {
+      if (!selecting) return;
+      setStartLatLng(ev.latlng);
+      if (rectLayer && map) {
+        try { map.removeLayer(rectLayer); } catch (e) {}
+        setRectLayer(null);
+      }
+    };
+
+    const onMouseMove = (ev: L.LeafletMouseEvent) => {
+      if (!selecting || !startLatLng) return;
+      const bounds = L.latLngBounds(startLatLng, ev.latlng);
+      if (rectLayer) {
+        rectLayer.setBounds(bounds);
+      } else {
+        const rect = L.rectangle(bounds, { color: 'red', weight: 1, dashArray: '4', fillOpacity: 0.05 });
+        rect.addTo(map);
+        setRectLayer(rect);
+      }
+    };
+
+    const onMouseUp = (ev: L.LeafletMouseEvent) => {
+      if (!selecting) return;
+      setSelecting(false);
+      setStartLatLng(null);
+      // يبقى المستطيل حتى يضغط المستخدم زر الحفظ أو يزيله
+    };
+
+    map.on('mousedown', onMouseDown as any);
+    map.on('mousemove', onMouseMove as any);
+    map.on('mouseup', onMouseUp as any);
+
+    return () => {
+      map.off('mousedown', onMouseDown as any);
+      map.off('mousemove', onMouseMove as any);
+      map.off('mouseup', onMouseUp as any);
+    };
+  }, [map, selecting, startLatLng, rectLayer]);
+
   useEffect(() => {
     if (map) {
       map.invalidateSize();
     }
   }, [map, activeTileSourceIndex, useFallbackTiles]);
+
+  // تنظيف عند فك التثبيت
+  useEffect(() => {
+    return () => {
+      if (rectLayer && map) {
+        try { map.removeLayer(rectLayer); } catch (e) {}
+      }
+    };
+  }, []);
 
   // تعيين الأيقونة الافتراضية
   useEffect(() => {
@@ -257,6 +315,87 @@ export default function MapViewer({
 
   return (
     <div className="relative h-full w-full">
+      {/* أزرار اختيار المنطقة والتصدير */}
+      <div className="absolute top-4 left-20 z-[1002] flex space-x-2">
+        <button
+          onClick={() => {
+            if (!map) return alert('الخريطة غير جاهزة');
+            setSelecting(!selecting);
+            setExportLink(null);
+            // تنظيف أي مستطيل قديم
+            if (rectLayer) {
+              try { map.removeLayer(rectLayer); } catch (e) {}
+              setRectLayer(null);
+            }
+          }}
+          className={`inline-flex items-center rounded-md px-3 py-2 text-xs font-semibold ring-1 ${selecting ? 'bg-blue-600 text-white ring-blue-300' : 'bg-white text-gray-800 ring-gray-200'}`}
+        >
+          {selecting ? 'إنهاء التحديد' : 'ابدأ تحديد المنطقة'}
+        </button>
+
+        {rectLayer && (
+          <button
+            onClick={async () => {
+              if (!map) return alert('الخريطة غير جاهزة');
+
+              try {
+                const container = map.getContainer();
+                const bounds = rectLayer.getBounds();
+
+                // تحويل الإحداثيات إلى نقاط الحاوية (px)
+                const p1 = map.latLngToContainerPoint(bounds.getNorthWest());
+                const p2 = map.latLngToContainerPoint(bounds.getSouthEast());
+
+                const left = Math.min(p1.x, p2.x);
+                const top = Math.min(p1.y, p2.y);
+                const width = Math.abs(p2.x - p1.x);
+                const height = Math.abs(p2.y - p1.y);
+
+                // التقاط الخريطة بكاملها ثم اقتطاع الجزئية المطلوبة
+                const canvas = await html2canvas(container as HTMLElement, { useCORS: true, logging: false });
+                const cropped = document.createElement('canvas');
+                cropped.width = Math.max(1, Math.round(width));
+                cropped.height = Math.max(1, Math.round(height));
+                const ctx = cropped.getContext('2d');
+                if (!ctx) throw new Error('تعذر الحصول على سياق الرسم');
+
+                ctx.drawImage(canvas, left, top, width, height, 0, 0, width, height);
+
+                // تحويل إلى blob ثم رفعها إلى backend لتحويلها إلى TIFF
+                cropped.toBlob(async (blob) => {
+                  if (!blob) return alert('فشل إنشاء الصورة');
+                  const form = new FormData();
+                  form.append('file', blob, 'map_capture.png');
+                  try {
+                    const resp = await axios.post((process.env.NEXT_PUBLIC_API_BASE || '') + '/save_map_tiff', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+                    const download = resp.data?.download_url;
+                    if (download) {
+                      setExportLink((process.env.NEXT_PUBLIC_API_BASE || '') + download);
+                      // تنزيل تلقائي
+                      window.open((process.env.NEXT_PUBLIC_API_BASE || '') + download, '_blank');
+                    } else {
+                      alert('تم الحفظ بنجاح');
+                    }
+                  } catch (e:any) {
+                    console.error(e);
+                    alert('فشل رفع الصورة إلى الخادم: ' + (e?.response?.data?.detail || e.message));
+                  }
+                }, 'image/png');
+              } catch (e:any) {
+                console.error(e);
+                alert('خطأ أثناء التقاط المنطقة: ' + e.message);
+              }
+            }}
+            className="inline-flex items-center rounded-md bg-green-100 px-3 py-2 text-xs font-semibold text-green-800 ring-1 ring-green-200 hover:bg-green-200"
+          >
+            حفظ كـ TIFF
+          </button>
+        )}
+
+        {exportLink && (
+          <a href={exportLink} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-md bg-white px-3 py-2 text-xs font-semibold text-blue-700 ring-1 ring-blue-200 hover:bg-blue-50">فتح TIFF</a>
+        )}
+      </div>
       {/* زر لفتح الطبقات الحالية في عرض Cesium (يفتح في نافذة جديدة) */}
       <div className="absolute top-4 left-4 z-[1002]">
         <button
