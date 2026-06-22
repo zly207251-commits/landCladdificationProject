@@ -34,10 +34,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
 
   // أنواع الملفات المدعومة
   const acceptedFiles = {
-    'image/jpeg': ['.jpg', '.jpeg'],
-    'image/png': ['.png'],
-    'image/tiff': ['.tiff', '.tif'],
-    'application/octet-stream': ['.geotiff', '.tif'] // GeoTIFF
+    'image/*': ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.geotiff']
   };
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {

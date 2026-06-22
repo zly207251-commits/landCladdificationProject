@@ -51,7 +51,26 @@ class ProjectionAgent(BaseAgent):
             content=f"معايير الإسقاط المعتمدة: مقياس الرسم = {pixel_scale} متر/بكسل، الإحداثي المرجعي = ({ref_lat}, {ref_lon})"
         )
 
-        image = cv2.imread(image_path)
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if image is None and rasterio is not None:
+            try:
+                with rasterio.open(image_path) as ds:
+                    bands = ds.read()
+                    if bands.ndim == 3:
+                        if bands.shape[0] >= 3:
+                            image = np.stack([bands[0], bands[1], bands[2]], axis=-1)
+                        else:
+                            image = np.transpose(bands, (1, 2, 0))
+                    else:
+                        image = bands
+                    image = np.asarray(image, dtype=np.uint8)
+                    if image.ndim == 2:
+                        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+                    elif image.shape[2] == 4:
+                        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+            except Exception:
+                image = None
+
         if image is None:
             self.message_bus.publish(
                 task_id=task_id,
@@ -62,6 +81,7 @@ class ProjectionAgent(BaseAgent):
             memory.update_task_status(task_id, "FAILED")
             return {"next_agent": "end"}
 
+        original_image = image.copy()
         self.message_bus.publish(
             task_id=task_id,
             sender=self.name,
@@ -119,6 +139,7 @@ class ProjectionAgent(BaseAgent):
                 metadata={"description": "قطعة أرض مستخرجة بواسطة SAM", "pixel_scale": pixel_scale}
             )
 
+            cv2.polylines(original_image, [np.array(poly, dtype=np.int32)], True, (0, 0, 255), 3)
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
@@ -128,6 +149,26 @@ class ProjectionAgent(BaseAgent):
                     f"{feddan} فدان، {qirat} قيراط، {sahm:.2f} سهم."
                 ),
                 payload={"layer_name": "lands", "area_sq_meters": area_sqm}
+            )
+
+        processed_path = None
+        try:
+            processed_filename = f"{task_id}_processed.png"
+            processed_path = os.path.join(os.path.dirname(image_path), processed_filename)
+            cv2.imwrite(processed_path, original_image)
+            memory.update_task_processed_image(task_id, processed_path)
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content=f"تم حفظ الصورة النهائية المعالجة: {processed_filename}"
+            )
+        except Exception as err:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content=f"تعذر حفظ الصورة النهائية المعالجة: {str(err)}"
             )
 
         self.message_bus.publish(

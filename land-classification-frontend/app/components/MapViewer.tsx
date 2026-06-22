@@ -98,9 +98,6 @@ export default function MapViewer({
     setTileLoadError(false);
     setUseFallbackTiles(false);
     setActiveTileSourceIndex(0);
-    if (map) {
-      map.invalidateSize();
-    }
   };
 
   // أحداث الفأرة لاختيار المستطيل
@@ -147,10 +144,8 @@ export default function MapViewer({
   }, [map, selecting, startLatLng, rectLayer]);
 
   useEffect(() => {
-    if (map) {
-      map.invalidateSize();
-    }
-  }, [map, activeTileSourceIndex, useFallbackTiles]);
+    // Trigger a re-render after tile source changes to let Leaflet redraw.
+  }, [activeTileSourceIndex, useFallbackTiles]);
 
   // تنظيف عند فك التثبيت
   useEffect(() => {
@@ -367,12 +362,13 @@ export default function MapViewer({
                   const form = new FormData();
                   form.append('file', blob, 'map_capture.png');
                   try {
-                    const resp = await axios.post((process.env.NEXT_PUBLIC_API_BASE || '') + '/save_map_tiff', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-                    const download = resp.data?.download_url;
-                    if (download) {
-                      setExportLink((process.env.NEXT_PUBLIC_API_BASE || '') + download);
-                      // تنزيل تلقائي
-                      window.open((process.env.NEXT_PUBLIC_API_BASE || '') + download, '_blank');
+                        const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+                        const resp = await axios.post(base + '/save_map_tiff', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+                        const download = resp.data?.download_url;
+                        if (download) {
+                          setExportLink(base + download);
+                          // تنزيل تلقائي
+                          window.open(base + download, '_blank');
                     } else {
                       alert('تم الحفظ بنجاح');
                     }
@@ -431,7 +427,6 @@ export default function MapViewer({
         center={mapCenter}
         zoom={mapZoom}
         className="h-full w-full rounded-lg"
-        whenCreated={setMap}
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
       >

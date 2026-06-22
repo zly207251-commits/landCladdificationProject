@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_CONFIG } from "@/app/lib/map-config";
 import ExportCenter from "@/app/components/ExportCenter";
@@ -18,7 +19,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState<boolean>(false);
-  const [showOriginalImage, setShowOriginalImage] = useState<boolean>(false);
+  const router = useRouter();
 
   const AGENT_LABELS: Record<string, string> = {
     COORDINATOR: 'وكيل المنسق',
@@ -100,6 +101,8 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
   };
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
+  const processedImageSrc = report?.processed_image_url ? `${API_CONFIG.baseURL}${report.processed_image_url}` : null;
+  const globeViewerLink = report?.task_id ? `/globe?task_id=${report.task_id}` : null;
 
   const classificationMeta: Record<string, { icon: string; label: string; color: string }> = {
     class_name: { icon: '🏷️', label: 'التسمية', color: 'bg-blue-50 text-blue-700' },
@@ -157,6 +160,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
 
     const first = normalizedRing[0];
     const last = normalizedRing[normalizedRing.length - 1];
+    if (!first || !last) return [];
     if (first[0] !== last[0] || first[1] !== last[1]) {
       normalizedRing.push(first);
     }
@@ -297,13 +301,23 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowOriginalImage((prev) => !prev)}
-                  className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
-                >
-                  {showOriginalImage ? 'إخفاء الصورة الأصلية' : 'عرض الصورة الأصلية'}
-                </button>
+                {(imageSrc || processedImageSrc) && (
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/results/images?task_id=${taskId}`)}
+                    className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
+                  >
+                    عرض الصور في صفحة منفصلة
+                  </button>
+                )}
+                {globeViewerLink && (
+                  <a
+                    href={globeViewerLink}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                  >
+                    عرض المهمة في Globe
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={toggleLogs}
@@ -412,16 +426,6 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          {showOriginalImage && imageSrc && (
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="font-semibold text-lg mb-4">الصورة المرفوعة للمهمة</h3>
-              <img
-                src={imageSrc}
-                alt="صورة المهمة"
-                className="w-full rounded-lg border border-gray-200 object-contain"
-              />
-            </div>
-          )}
         </div>
       )}
     </div>

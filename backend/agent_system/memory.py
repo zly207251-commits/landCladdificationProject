@@ -29,12 +29,19 @@ class SharedMemory:
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
                     image_path TEXT,
+                    processed_image_path TEXT,
                     status TEXT NOT NULL,
                     metadata TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Ensure processed_image_path exists on older schemas
+            cursor.execute("PRAGMA table_info(tasks)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'processed_image_path' not in columns:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN processed_image_path TEXT")
             
             # 2. جدول طبقات المعالم (task_layers): يحفظ المضلعات المستخرجة ومساحاتها
             cursor.execute("""
@@ -93,6 +100,17 @@ class SharedMemory:
             cursor = conn.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status, now, task_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_task_processed_image(self, task_id: str, processed_image_path: str) -> bool:
+        """حفظ مسار الصورة النهائية المعالجة في المهمة."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET processed_image_path = ?, updated_at = ? WHERE task_id = ?",
+                (processed_image_path, now, task_id)
             )
             conn.commit()
             return cursor.rowcount > 0

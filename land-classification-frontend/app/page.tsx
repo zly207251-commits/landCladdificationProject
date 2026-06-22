@@ -6,7 +6,7 @@ import Link from 'next/link';
 import UploadPortal from "./components/UploadPortal";
 import ProcessingDashboard from "./components/ProcessingDashboard";
 
-type AppState = 'upload' | 'processing';
+type AppState = 'upload' | 'processing' | 'results';
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('upload');
@@ -15,8 +15,6 @@ export default function Home() {
 
   // معالجة اكتمال الرفع
   const handleUploadComplete = (fileInfo: any) => {
-    setUploadedFile(fileInfo);
-    // backend returns { task_id }
     const tid = fileInfo?.task_id || fileInfo?.taskId || fileInfo?.fileId;
     setJobId(tid || null);
     setAppState('processing');
@@ -73,6 +71,25 @@ export default function Home() {
             >
               🏠 العودة للرئيسية
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto mb-8">
+        <div className="grid gap-6 lg:grid-cols-[1fr,0.7fr]">
+          <div className="rounded-3xl bg-white p-6 shadow-lg">
+            <h2 className="text-2xl font-semibold text-slate-900 mb-3">عرض Globe مستقل</h2>
+            <p className="text-slate-600 leading-relaxed">
+              يمكنك فتح صفحة عرض ثلاثية الأبعاد شبيهة بـ Google Earth باستخدام NASA GIBS وطبقات المعالم.
+            </p>
+          </div>
+          <div className="rounded-3xl bg-white p-6 shadow-lg flex items-center justify-center">
+            <a
+              href="/globe"
+              className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-white text-base font-semibold transition hover:bg-blue-700"
+            >
+              افتح عارض Globe مستقل
+            </a>
           </div>
         </div>
       </div>

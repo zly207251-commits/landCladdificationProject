@@ -282,6 +282,10 @@ def get_task_report(task_id: str):
         map_center = [avg_lat, avg_lon]
         map_zoom = 17
 
+    processed_image_url = None
+    if task.get("processed_image_path") and os.path.exists(task["processed_image_path"]):
+        processed_image_url = f"/tasks/{task_id}/image/processed"
+
     return {
         "task_id": task_id,
         "status": task["status"],
@@ -289,6 +293,7 @@ def get_task_report(task_id: str):
         "updated_at": task["updated_at"],
         "image_path": task["image_path"],
         "image_url": f"/tasks/{task_id}/image",
+        "processed_image_url": processed_image_url,
         "metadata": task["metadata"],
         "layers": report_layers,
         "geojson": geojson,
@@ -321,6 +326,34 @@ def get_task_image(task_id: str):
             return FileResponse(image_path, filename=os.path.basename(image_path))
 
     return FileResponse(image_path, filename=os.path.basename(image_path))
+
+@app.get("/tasks/{task_id}/image/processed", summary="4b. جلب الصورة النهائية المعالجة")
+def get_task_processed_image(task_id: str):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+
+    processed_path = task.get("processed_image_path")
+    if not processed_path or not os.path.exists(processed_path):
+        raise HTTPException(status_code=404, detail="الصورة النهائية غير متاحة.")
+
+    _, ext = os.path.splitext(processed_path)
+    ext = ext.lower()
+    if ext in ['.tif', '.tiff', '.geotiff']:
+        try:
+            image = cv2.imread(processed_path, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise ValueError("تعذر قراءة الصورة النهائية")
+            if len(image.shape) == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            elif image.shape[2] == 4:
+                image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            _, buffer = cv2.imencode('.png', image)
+            return StreamingResponse(io.BytesIO(buffer.tobytes()), media_type='image/png')
+        except Exception:
+            return FileResponse(processed_path, filename=os.path.basename(processed_path))
+
+    return FileResponse(processed_path, filename=os.path.basename(processed_path))
 
 @app.get("/tasks/{task_id}/logs", summary="5. جلب السجل الحقيقي للمراسلات بين الوكلاء")
 def get_task_logs(task_id: str):
