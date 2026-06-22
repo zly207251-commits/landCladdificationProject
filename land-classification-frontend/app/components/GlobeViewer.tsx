@@ -373,6 +373,62 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         <div className="bg-slate-950 text-white rounded-3xl overflow-hidden shadow-lg h-[620px] relative">
           <div className="h-full" ref={containerRef} style={{ minHeight: 620 }} />
 
+            {/* Overlay لالتقاط أحداث الماوس أثناء وضع التحديد (موثوق عبر جميع المتصفحات) */}
+            <div
+              onMouseDown={(ev) => {
+                console.debug('overlay mousedown', { selecting });
+                if (!selecting) return;
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                setStartPoint({ x, y });
+                if (selectionRef.current) {
+                  selectionRef.current.style.left = `${x}px`;
+                  selectionRef.current.style.top = `${y}px`;
+                  selectionRef.current.style.width = `0px`;
+                  selectionRef.current.style.height = `0px`;
+                  selectionRef.current.style.display = 'block';
+                  selectionRef.current.style.pointerEvents = 'none';
+                }
+              }}
+              onMouseMove={(ev) => {
+                if (!selecting || !startPoint || !selectionRef.current) return;
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                const left = Math.min(startPoint.x, x);
+                const top = Math.min(startPoint.y, y);
+                const width = Math.abs(x - startPoint.x);
+                const height = Math.abs(y - startPoint.y);
+                selectionRef.current.style.left = `${left}px`;
+                selectionRef.current.style.top = `${top}px`;
+                selectionRef.current.style.width = `${width}px`;
+                selectionRef.current.style.height = `${height}px`;
+              }}
+              onMouseUp={(ev) => {
+                if (!selecting || !startPoint || !selectionRef.current) return;
+                const rect = selectionRef.current.getBoundingClientRect();
+                const parentRect = containerRef.current?.getBoundingClientRect();
+                if (!parentRect) return;
+                const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
+                setSelectionRect(relativeRect);
+                setSelecting(false);
+                setStartPoint(null);
+              }}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 45,
+                background: 'transparent',
+                pointerEvents: selecting ? 'auto' : 'none'
+              }}
+            />
+
           {/* عناصر التحكم العائمة */}
           <div className="absolute top-4 left-4 z-[60] flex gap-2">
             <button onClick={toggleFullscreen} className="rounded-md bg-white/20 px-3 py-2 text-xs">ملء الشاشة</button>
