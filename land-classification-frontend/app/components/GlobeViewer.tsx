@@ -504,7 +504,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               <button onClick={saveSelectionAsTiff} className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white">حفظ كـ TIFF</button>
             )}
             {exportLink && (
-              <a href={exportLink} target="_blank" rel="noreferrer" className="rounded-md bg-white/20 px-3 py-2 text-xs">فتح TIFF</a>
+              <a href={exportLink} download className="rounded-md bg-white/20 px-3 py-2 text-xs">تحميل TIFF</a>
             )}
           </div>
 
