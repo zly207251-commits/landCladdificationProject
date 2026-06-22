@@ -9,10 +9,18 @@ import uuid
 import os
 import mimetypes
 import importlib.util
+from pydantic import BaseModel
 from PIL import Image
 
 rasterio_spec = importlib.util.find_spec('rasterio')
-rasterio = importlib.import_module('rasterio') if rasterio_spec is not None else None
+if rasterio_spec is not None:
+    rasterio = importlib.import_module('rasterio')
+    from rasterio.warp import transform_bounds
+    from rasterio.windows import from_bounds
+else:
+    rasterio = None
+    transform_bounds = None
+    from_bounds = None
 
 # استيراد مكونات نظام الوكلاء
 from agent_system.memory import SharedMemory
@@ -354,6 +362,87 @@ def get_task_processed_image(task_id: str):
             return FileResponse(processed_path, filename=os.path.basename(processed_path))
 
     return FileResponse(processed_path, filename=os.path.basename(processed_path))
+
+@app.get("/tasks/{task_id}/crop", summary="7. قص صورة المهمة الجغرافية حسب حدود الإحداثيات")
+def crop_task_image(
+    task_id: str,
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float
+):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+
+    image_path = task["image_path"]
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="الصورة غير موجودة على الخادم.")
+
+    if rasterio is None or transform_bounds is None or from_bounds is None:
+        raise HTTPException(status_code=500, detail="Rasterio مطلوب لتنفيذ القص الجغرافي.")
+
+    task_meta = task.get("metadata", {}) or {}
+    geo_metadata = task_meta.get("geo_metadata") if task_meta.get("image_type") == "geospatial" else None
+
+    try:
+        with rasterio.open(image_path) as src:
+            if src.crs is None:
+                raise ValueError("مصدر الصورة لا يحتوي على CRS صالح.")
+            if not geo_metadata or not geo_metadata.get("crs"):
+                # إذا لم تكن metadata محفوظة أثناء التحميل، نعتمد على CRS من الملف نفسه
+                geo_metadata = {
+                    "crs": str(src.crs)
+                }
+
+            min_lon_val = min(min_lon, max_lon)
+            max_lon_val = max(min_lon, max_lon)
+            min_lat_val = min(min_lat, max_lat)
+            max_lat_val = max(min_lat, max_lat)
+
+            src_min_lon, src_min_lat, src_max_lon, src_max_lat = transform_bounds(
+                "EPSG:4326",
+                src.crs,
+                min_lon_val,
+                min_lat_val,
+                max_lon_val,
+                max_lat_val,
+                densify_pts=21
+            )
+
+            window = from_bounds(
+                min(src_min_lon, src_max_lon),
+                min(src_min_lat, src_max_lat),
+                max(src_min_lon, src_max_lon),
+                max(src_min_lat, src_max_lat),
+                transform=src.transform,
+                width=src.width,
+                height=src.height
+            )
+            window = window.round_offsets().round_shape()
+            if window.width <= 0 or window.height <= 0:
+                raise ValueError("المنطقة المحددة خارج نطاق الصورة الجغرافية.")
+
+            data = src.read(window=window, boundless=True, fill_value=0)
+            out_transform = rasterio.windows.transform(window, src.transform)
+            out_name = f"{task_id}_crop_{uuid.uuid4().hex[:8]}.tiff"
+            out_path = os.path.join(UPLOAD_DIR, out_name)
+
+            profile = src.profile.copy()
+            profile.update({
+                "driver": "GTiff",
+                "height": data.shape[1],
+                "width": data.shape[2],
+                "transform": out_transform,
+                "count": data.shape[0]
+            })
+
+            with rasterio.open(out_path, "w", **profile) as dst:
+                dst.write(data)
+
+        return FileResponse(out_path, media_type='image/tiff', filename=out_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل تصدير القص الجغرافي: {str(e)}")
 
 @app.get("/tasks/{task_id}/logs", summary="5. جلب السجل الحقيقي للمراسلات بين الوكلاء")
 def get_task_logs(task_id: str):

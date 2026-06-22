@@ -404,6 +404,7 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
                 <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
                 <AuditInterface
+                  taskId={report.task_id}
                   initialFeatures={taskFeatures}
                   center={report.map_center ?? null}
                   zoom={report.map_zoom ?? null}

@@ -23,7 +23,7 @@ const IMAGERY_PROVIDERS = [
   {
     id: 'google',
     label: 'Google Satellite',
-    description: 'Google Satellite عبر رابط غير رسمي للـ tiles',
+    description: 'Google Satellite عبر رابط   للـ tiles',
   },
   {
     id: 'gibs_truecolor',
@@ -302,45 +302,44 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     }
   };
 
+  const getLonLatFromScreen = (x: number, y: number) => {
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) return null;
+    const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
+      new Cesium.Cartesian2(x, y),
+      viewerRef.current.scene.globe.ellipsoid
+    );
+    if (!cartesian) return null;
+    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+    return {
+      lon: Cesium.Math.toDegrees(cartographic.longitude),
+      lat: Cesium.Math.toDegrees(cartographic.latitude)
+    };
+  };
+
   const saveSelectionAsTiff = async () => {
     if (!selectionRect || !viewerRef.current) return alert('لم تحدد منطقة للحفظ');
+    if (!taskId) return alert('لا يوجد معرف مهمة مرتبط لتصدير القص الجغرافي');
+
     try {
-      const canvas: HTMLCanvasElement = viewerRef.current.scene.canvas as HTMLCanvasElement;
-      const dataUrl = canvas.toDataURL('image/png');
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise((res) => { img.onload = res; });
+      const topLeft = getLonLatFromScreen(selectionRect.x, selectionRect.y);
+      const bottomRight = getLonLatFromScreen(selectionRect.x + selectionRect.width, selectionRect.y + selectionRect.height);
+      if (!topLeft || !bottomRight) {
+        throw new Error('تعذر تحويل الحقول المحددة إلى إحداثيات جغرافية. حاول اختيار منطقة أقرب إلى سطح الكرة الأرضية.');
+      }
 
-      const tmp = document.createElement('canvas');
-      tmp.width = Math.max(1, Math.round(selectionRect.width));
-      tmp.height = Math.max(1, Math.round(selectionRect.height));
-      const ctx = tmp.getContext('2d');
-      if (!ctx) throw new Error('تعذر الحصول على سياق الرسم');
-
-      ctx.drawImage(img, selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height, 0, 0, selectionRect.width, selectionRect.height);
-
-      const blob: Blob | null = await new Promise((resolve) => tmp.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('تعذر إنشاء Blob');
-
-      const form = new FormData();
-      form.append('file', blob, 'globe_capture.png');
+      const minLon = Math.min(topLeft.lon, bottomRight.lon);
+      const maxLon = Math.max(topLeft.lon, bottomRight.lon);
+      const minLat = Math.min(topLeft.lat, bottomRight.lat);
+      const maxLat = Math.max(topLeft.lat, bottomRight.lat);
       const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const resp = await fetch(base + '/save_map_tiff', { method: 'POST', body: form });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(txt || 'فشل حفظ TIFF');
-      }
-      const data = await resp.json();
-      const download = data?.download_url;
-      if (download) {
-        setExportLink(base + download);
-        window.open(base + download, '_blank');
-      } else {
-        alert('تم الحفظ بنجاح');
-      }
+      const downloadUrl = `${base}/tasks/${taskId}/crop?min_lon=${encodeURIComponent(minLon)}&min_lat=${encodeURIComponent(minLat)}&max_lon=${encodeURIComponent(maxLon)}&max_lat=${encodeURIComponent(maxLat)}`;
+
+      setExportLink(downloadUrl);
+      window.open(downloadUrl, '_blank');
     } catch (e:any) {
       console.error(e);
-      alert('خطأ أثناء حفظ TIFF: ' + (e?.message || e));
+      alert('خطأ أثناء طلب القص الجغرافي: ' + (e?.message || e));
     }
   };
 

@@ -1,12 +1,10 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, LayersControl, GeoJSON, Polygon, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, LayersControl, GeoJSON, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MAP_CONFIG, LAYER_STYLES } from '@/app/lib/map-config';
-import html2canvas from 'html2canvas';
-import axios from 'axios';
+import { API_CONFIG, MAP_CONFIG, LAYER_STYLES } from '@/app/lib/map-config';
 
 // إصلاح أيقونات Leaflet - استخدام SVG مدمج
 const createCustomIcon = () => {
@@ -32,6 +30,7 @@ if (typeof window !== 'undefined') {
 }
 
 interface MapViewerProps {
+  taskId?: string;
   geojsonData?: any;
   onPolygonClick?: (feature: any) => void;
   selectedFeature?: any;
@@ -42,6 +41,7 @@ interface MapViewerProps {
 }
 
 export default function MapViewer({ 
+  taskId,
   geojsonData, 
   onPolygonClick, 
   selectedFeature,
@@ -353,54 +353,22 @@ export default function MapViewer({
           <button
             onClick={async () => {
               if (!map) return alert('الخريطة غير جاهزة');
+              if (!taskId) return alert('لا يوجد معرف مهمة مرتبط لتصدير القص الجغرافي');
 
               try {
-                const container = map.getContainer();
                 const bounds = rectLayer.getBounds();
+                const minLat = bounds.getSouth();
+                const maxLat = bounds.getNorth();
+                const minLon = bounds.getWest();
+                const maxLon = bounds.getEast();
 
-                // تحويل الإحداثيات إلى نقاط الحاوية (px)
-                const p1 = map.latLngToContainerPoint(bounds.getNorthWest());
-                const p2 = map.latLngToContainerPoint(bounds.getSouthEast());
-
-                const left = Math.min(p1.x, p2.x);
-                const top = Math.min(p1.y, p2.y);
-                const width = Math.abs(p2.x - p1.x);
-                const height = Math.abs(p2.y - p1.y);
-
-                // التقاط الخريطة بكاملها ثم اقتطاع الجزئية المطلوبة
-                const canvas = await html2canvas(container as HTMLElement, { useCORS: true, logging: false });
-                const cropped = document.createElement('canvas');
-                cropped.width = Math.max(1, Math.round(width));
-                cropped.height = Math.max(1, Math.round(height));
-                const ctx = cropped.getContext('2d');
-                if (!ctx) throw new Error('تعذر الحصول على سياق الرسم');
-
-                ctx.drawImage(canvas, left, top, width, height, 0, 0, width, height);
-
-                // تحويل إلى blob ثم رفعها إلى backend لتحويلها إلى TIFF
-                cropped.toBlob(async (blob) => {
-                  if (!blob) return alert('فشل إنشاء الصورة');
-                  const form = new FormData();
-                  form.append('file', blob, 'map_capture.png');
-                  try {
-                        const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-                        const resp = await axios.post(base + '/save_map_tiff', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-                        const download = resp.data?.download_url;
-                        if (download) {
-                          setExportLink(base + download);
-                          // تنزيل تلقائي
-                          window.open(base + download, '_blank');
-                    } else {
-                      alert('تم الحفظ بنجاح');
-                    }
-                  } catch (e:any) {
-                    console.error(e);
-                    alert('فشل رفع الصورة إلى الخادم: ' + (e?.response?.data?.detail || e.message));
-                  }
-                }, 'image/png');
+                const base = API_CONFIG.baseURL || '/api';
+                const downloadUrl = `${base}/tasks/${taskId}/crop?min_lon=${encodeURIComponent(minLon)}&min_lat=${encodeURIComponent(minLat)}&max_lon=${encodeURIComponent(maxLon)}&max_lat=${encodeURIComponent(maxLat)}`;
+                setExportLink(downloadUrl);
+                window.open(downloadUrl, '_blank');
               } catch (e:any) {
                 console.error(e);
-                alert('خطأ أثناء التقاط المنطقة: ' + e.message);
+                alert('خطأ أثناء طلب القص الجغرافي: ' + (e?.message || e));
               }
             }}
             className="inline-flex items-center rounded-md bg-green-100 px-3 py-2 text-xs font-semibold text-green-800 ring-1 ring-green-200 hover:bg-green-200"
@@ -447,6 +415,7 @@ export default function MapViewer({
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
+        whenCreated={setMap}
         className="h-full w-full rounded-lg"
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}

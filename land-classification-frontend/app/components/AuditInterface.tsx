@@ -6,13 +6,14 @@ const MapViewer = dynamic(() => import('./MapViewer'), { ssr: false });
 import { LAYER_STYLES } from '@/app/lib/map-config';
 
 interface AuditInterfaceProps {
+  taskId?: string;
   initialFeatures?: any[];
   onSaveCorrections?: (corrections: any[]) => void;
   center?: [number, number] | null;
   zoom?: number | null;
 }
 
-export default function AuditInterface({ initialFeatures = [], onSaveCorrections, center = null, zoom = null }: AuditInterfaceProps) {
+export default function AuditInterface({ taskId, initialFeatures = [], onSaveCorrections, center = null, zoom = null }: AuditInterfaceProps) {
   const [selectedFeature, setSelectedFeature] = useState<any>(null);
   const [corrections, setCorrections] = useState<any[]>([]);
   const [features, setFeatures] = useState<any[]>(initialFeatures);
@@ -225,6 +226,7 @@ export default function AuditInterface({ initialFeatures = [], onSaveCorrections
           
           <div className="h-[500px] p-4">
             <MapViewer
+              taskId={taskId}
               geojsonData={geojsonData}
               onPolygonClick={handleFeatureClick}
               selectedFeature={selectedFeature}
