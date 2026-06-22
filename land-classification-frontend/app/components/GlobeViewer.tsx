@@ -212,62 +212,62 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [taskId]);
 
-  // أحداث التحديد في DOM overlay (اختيار مستطيل)
+  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler
   useEffect(() => {
     const container = containerRef.current;
-    const canvas = viewerRef.current?.scene?.canvas || viewerRef.current?.canvas || container?.querySelector('canvas');
-    const target = canvas instanceof HTMLElement ? canvas : container;
-    if (!target) return;
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium || !container) return;
+    const canvas = viewerRef.current.scene.canvas;
+    if (!canvas) return;
 
-    const onMouseDown = (ev: MouseEvent) => {
+    const getPointer = (position: any) => {
+      const rect = container.getBoundingClientRect();
+      return {
+        x: position.x - rect.left,
+        y: position.y - rect.top
+      };
+    };
+
+    const handler = new Cesium.ScreenSpaceEventHandler(canvas);
+
+    handler.setInputAction((movement: any) => {
       if (!selecting) return;
-      const rect = (container || target).getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      setStartPoint({ x, y });
-      // إظهار عنصر التحديد
+      const pos = getPointer(movement.position);
+      setStartPoint(pos);
       if (selectionRef.current) {
-        selectionRef.current.style.left = `${x}px`;
-        selectionRef.current.style.top = `${y}px`;
+        selectionRef.current.style.left = `${pos.x}px`;
+        selectionRef.current.style.top = `${pos.y}px`;
         selectionRef.current.style.width = `0px`;
         selectionRef.current.style.height = `0px`;
         selectionRef.current.style.display = 'block';
       }
-    };
+    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
 
-    const onMouseMove = (ev: MouseEvent) => {
+    handler.setInputAction((movement: any) => {
       if (!selecting || !startPoint || !selectionRef.current) return;
-      const rect = (container || target).getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      const left = Math.min(startPoint.x, x);
-      const top = Math.min(startPoint.y, y);
-      const width = Math.abs(x - startPoint.x);
-      const height = Math.abs(y - startPoint.y);
+      const pos = getPointer(movement.endPosition || movement.position);
+      const left = Math.min(startPoint.x, pos.x);
+      const top = Math.min(startPoint.y, pos.y);
+      const width = Math.abs(startPoint.x - pos.x);
+      const height = Math.abs(startPoint.y - pos.y);
       selectionRef.current.style.left = `${left}px`;
       selectionRef.current.style.top = `${top}px`;
       selectionRef.current.style.width = `${width}px`;
       selectionRef.current.style.height = `${height}px`;
-    };
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    const onMouseUp = (ev: MouseEvent) => {
-      if (!selecting || !startPoint || !selectionRef.current || !container) return;
+    handler.setInputAction((movement: any) => {
+      if (!selecting || !startPoint || !selectionRef.current) return;
       const rect = selectionRef.current.getBoundingClientRect();
       const parentRect = container.getBoundingClientRect();
       const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
       setSelectionRect(relativeRect);
       setSelecting(false);
       setStartPoint(null);
-    };
-
-    target.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     return () => {
-      target.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      handler.destroy();
     };
   }, [selecting, startPoint, isLoaded]);
 
