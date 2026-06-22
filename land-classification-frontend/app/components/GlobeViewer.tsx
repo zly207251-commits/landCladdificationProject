@@ -269,6 +269,29 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [selecting, startPoint]);
 
+  // تعطيل تحكم الكاميرا في Cesium أثناء التحديد لمنع السحب
+  useEffect(() => {
+    if (!viewerRef.current) return;
+    try {
+      const sc = viewerRef.current.scene.screenSpaceCameraController;
+      if (selecting) {
+        sc.enableRotate = false;
+        sc.enableTranslate = false;
+        sc.enableTilt = false;
+        sc.enableZoom = false;
+        sc.enableLook = false;
+      } else {
+        sc.enableRotate = true;
+        sc.enableTranslate = true;
+        sc.enableTilt = true;
+        sc.enableZoom = true;
+        sc.enableLook = true;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [selecting]);
+
   const toggleFullscreen = async () => {
     const el = containerRef.current;
     if (!el) return;

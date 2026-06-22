@@ -104,6 +104,27 @@ export default function MapViewer({
   useEffect(() => {
     if (!map) return;
 
+    // تعطيل تفاعلات الخريطة أثناء وضع التحديد
+    try {
+      if (selecting) {
+        map.dragging.disable();
+        map.doubleClickZoom.disable();
+        map.scrollWheelZoom.disable();
+        if ((map as any).boxZoom) (map as any).boxZoom.disable();
+        if ((map as any).touchZoom) (map as any).touchZoom.disable();
+        const c = map.getContainer(); if (c) c.style.cursor = 'crosshair';
+      } else {
+        map.dragging.enable();
+        map.doubleClickZoom.enable();
+        map.scrollWheelZoom.enable();
+        if ((map as any).boxZoom) (map as any).boxZoom.enable();
+        if ((map as any).touchZoom) (map as any).touchZoom.enable();
+        const c = map.getContainer(); if (c) c.style.cursor = '';
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const onMouseDown = (ev: L.LeafletMouseEvent) => {
       if (!selecting) return;
       setStartLatLng(ev.latlng);
