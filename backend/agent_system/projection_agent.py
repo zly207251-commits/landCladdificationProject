@@ -93,63 +93,86 @@ class ProjectionAgent(BaseAgent):
         geo_metadata = task_meta.get('geo_metadata') if task_meta.get('image_type') == 'geospatial' else None
         transform = geo_metadata.get('transform') if isinstance(geo_metadata, dict) else None
 
-        polygons = self.segmenter.segment_image(image)
-        if not polygons:
+        segments = self.segmenter.segment_image(image)
+        if not segments:
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
                 message_type="WARNING",
                 content="لم يتم استخراج أي مضلعات من نموذج SAM. سيتم استخدام قطعة أرض افتراضية للاختبار."
             )
-            polygons = [[[100, 100], [600, 100], [600, 600], [100, 600], [100, 100]]]
+            segments = [{'label': 'unknown', 'polygons': [[[100, 100], [600, 100], [600, 600], [100, 600], [100, 100]]], 'mask': None, 'score': 0.5}]
 
-        for poly in polygons:
-            x = [pt[0] for pt in poly]
-            y = [pt[1] for pt in poly]
-            pixel_area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-            if pixel_area < 500:
-                continue
+        # color map: BGR for OpenCV
+        COLOR_MAP = {
+            'agricultural': (34, 139, 34),
+            'buildings': (0, 0, 255),
+            'water': (255, 0, 0),
+            'roads': (200, 200, 200),
+            'arid': (19, 69, 139),
+            'unknown': (0, 255, 255),
+        }
 
-            area_sqm = pixel_area * (pixel_scale ** 2)
+        # allow overriding line thickness from task metadata
+        line_thickness = int(task_meta.get('line_thickness', 1))
 
-            if transform is not None and len(transform) == 6:
-                geo_poly = [self._pixel_to_geo(pt, transform) for pt in poly]
-            else:
-                lat_scale = 1.0 / 111111.0
-                lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
-                geo_poly = []
-                for pt in poly:
-                    dx = pt[0] * pixel_scale
-                    dy = -pt[1] * pixel_scale
-                    point_lat = ref_lat + (dy * lat_scale)
-                    point_lon = ref_lon + (dx * lon_scale)
-                    geo_poly.append([point_lon, point_lat])
+        for seg in segments:
+            label = seg.get('label', 'unknown')
+            seg_polygons = seg.get('polygons') if isinstance(seg.get('polygons'), list) else []
+            score = float(seg.get('score', 0.0))
 
-            feddan, qirat, sahm = self._convert_to_agricultural_units(area_sqm)
+            for poly in seg_polygons:
+                x = [pt[0] for pt in poly]
+                y = [pt[1] for pt in poly]
+                pixel_area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+                if pixel_area < 500:
+                    continue
 
-            memory.add_task_layer(
-                task_id=task_id,
-                layer_name="lands",
-                polygons=[poly],
-                geo_polygons=[geo_poly],
-                area_sq_meters=area_sqm,
-                area_feddan=feddan,
-                area_qirat=qirat,
-                area_sahm=sahm,
-                metadata={"description": "قطعة أرض مستخرجة بواسطة SAM", "pixel_scale": pixel_scale}
-            )
+                area_sqm = pixel_area * (pixel_scale ** 2)
 
-            cv2.polylines(original_image, [np.array(poly, dtype=np.int32)], True, (0, 0, 255), 3)
-            self.message_bus.publish(
-                task_id=task_id,
-                sender=self.name,
-                message_type="RESULT",
-                content=(
-                    f"تم استخراج قطعة أرض بالمساحة = {area_sqm:.2f} م² | "
-                    f"{feddan} فدان، {qirat} قيراط، {sahm:.2f} سهم."
-                ),
-                payload={"layer_name": "lands", "area_sq_meters": area_sqm}
-            )
+                if transform is not None and len(transform) == 6:
+                    geo_poly = [self._pixel_to_geo(pt, transform) for pt in poly]
+                else:
+                    lat_scale = 1.0 / 111111.0
+                    lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
+                    geo_poly = []
+                    for pt in poly:
+                        dx = pt[0] * pixel_scale
+                        dy = -pt[1] * pixel_scale
+                        point_lat = ref_lat + (dy * lat_scale)
+                        point_lon = ref_lon + (dx * lon_scale)
+                        geo_poly.append([point_lon, point_lat])
+
+                feddan, qirat, sahm = self._convert_to_agricultural_units(area_sqm)
+
+                memory.add_task_layer(
+                    task_id=task_id,
+                    layer_name=label,
+                    polygons=[poly],
+                    geo_polygons=[geo_poly],
+                    area_sq_meters=area_sqm,
+                    area_feddan=feddan,
+                    area_qirat=qirat,
+                    area_sahm=sahm,
+                    metadata={"description": f"قطعة من نوع {label}", "pixel_scale": pixel_scale, "score": score}
+                )
+
+                color = COLOR_MAP.get(label, COLOR_MAP['unknown'])
+                try:
+                    cv2.polylines(original_image, [np.array(poly, dtype=np.int32)], True, color, max(1, line_thickness))
+                except Exception:
+                    cv2.polylines(original_image, [np.array(poly, dtype=np.int32)], True, (0, 0, 255), 1)
+
+                self.message_bus.publish(
+                    task_id=task_id,
+                    sender=self.name,
+                    message_type="RESULT",
+                    content=(
+                        f"تم استخراج مضلع (نوع={label}) بالمساحة = {area_sqm:.2f} م² | "
+                        f"{feddan} فدان، {qirat} قيراط، {sahm:.2f} سهم."
+                    ),
+                    payload={"layer_name": label, "area_sq_meters": area_sqm, "score": score}
+                )
 
         processed_path = None
         try:

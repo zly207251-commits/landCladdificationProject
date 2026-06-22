@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 import os
 
+from typing import List, Dict, Any, Optional
+
+
 class LandSegmenterSAM:
     def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True):
         self.use_sam = False
@@ -63,10 +66,13 @@ class LandSegmenterSAM:
         if self.use_sam and self.mask_generator:
             try:
                 masks = self.mask_generator.generate(image)
-                polygons = []
+                segments: List[Dict[str, Any]] = []
                 for m in masks:
-                    segmentation = m['segmentation'].astype(np.uint8) * 255
-                    contours, _ = cv2.findContours(segmentation, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    segmentation = m['segmentation'].astype(np.uint8)
+                    # find contours per mask
+                    seg255 = (segmentation * 255).astype(np.uint8)
+                    contours, _ = cv2.findContours(seg255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    polygons = []
                     for cnt in contours:
                         area = cv2.contourArea(cnt)
                         if area < 1500:
@@ -74,7 +80,27 @@ class LandSegmenterSAM:
                         epsilon = 0.01 * cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, epsilon, True)
                         polygons.append(approx.reshape(-1, 2).tolist())
-                return polygons
+                    if not polygons:
+                        continue
+                    # classify the mask color/semantics roughly
+                    score = float(m.get('stability_score', 1.0)) if isinstance(m, dict) else 1.0
+                    segments.append({
+                        'label': 'unknown',
+                        'mask': segmentation,
+                        'polygons': polygons,
+                        'score': score,
+                    })
+                # attempt to label segments using color classifier
+                if segments:
+                    if not hasattr(self, 'color_classifier'):
+                        self.color_classifier = LandColorClassifier()
+                    for seg in segments:
+                        try:
+                            lbl = self.color_classifier.classify_mask(image, seg['mask'])
+                            seg['label'] = lbl
+                        except Exception:
+                            seg['label'] = 'unknown'
+                return segments
             except Exception as e:
                 msg = f"⚠️ خطأ في SAM أثناء التجزئة: {e}"
                 if self.fail_fast:
@@ -109,12 +135,70 @@ class LandSegmenterSAM:
         if not polygons:
             h, w = image.shape[:2]
             polygons.append([[50, 50], [w-50, 50], [w-50, h-50], [50, h-50]])
-        return polygons
+
+        # wrap fallback polygons into segment-like dicts with simple labeling
+        if not hasattr(self, 'color_classifier'):
+            self.color_classifier = LandColorClassifier()
+
+        segments: List[Dict[str, Any]] = []
+        for poly in polygons:
+            mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+            pts = np.array(poly, dtype=np.int32).reshape((-1, 2))
+            cv2.fillPoly(mask, [pts], 1)
+            try:
+                lbl = self.color_classifier.classify_mask(image, mask)
+            except Exception:
+                lbl = 'unknown'
+            segments.append({'label': lbl, 'mask': mask, 'polygons': [poly], 'score': 0.5})
+
+        return segments
 
 
 class LandColorClassifier:
     def __init__(self):
         pass
+
+    def classify_mask(self, image: np.ndarray, mask: np.ndarray) -> str:
+        """
+        Classify a binary mask region in the image into a simple semantic label.
+        Returns one of: 'agricultural','arid','roads','buildings','water','unknown'
+        """
+        if mask is None or image is None:
+            return 'unknown'
+        # ensure mask is binary 0/1
+        bin_mask = (mask > 0).astype(np.uint8)
+        if bin_mask.sum() == 0:
+            return 'unknown'
+
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        # compute mean HSV over masked pixels
+        h_vals = hsv[:, :, 0][bin_mask.astype(bool)]
+        s_vals = hsv[:, :, 1][bin_mask.astype(bool)]
+        v_vals = hsv[:, :, 2][bin_mask.astype(bool)]
+        if len(h_vals) == 0:
+            return 'unknown'
+        mean_h = int(np.mean(h_vals))
+        mean_s = int(np.mean(s_vals))
+        mean_v = int(np.mean(v_vals))
+
+        # heuristics
+        # greenish -> agricultural
+        if 35 <= mean_h <= 85 and mean_s > 40 and mean_v > 40:
+            return 'agricultural'
+        # water (blue)
+        if 90 <= mean_h <= 140 and mean_s > 30 and mean_v > 30:
+            return 'water'
+        # roads: low saturation, medium brightness
+        if mean_s < 60 and 80 <= mean_v <= 220:
+            return 'roads'
+        # buildings / concrete: low saturation high brightness or red hues
+        if (mean_h < 10 or mean_h > 160) and mean_v > 80:
+            return 'buildings'
+        if mean_s < 50 and mean_v > 140:
+            return 'buildings'
+
+        # fallback
+        return 'unknown'
 
     def _get_color_ratios(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)

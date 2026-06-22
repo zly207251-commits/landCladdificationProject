@@ -171,7 +171,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                 const dataSource = await Cesium.GeoJsonDataSource.load(taskReport.geojson, {
                   stroke: Cesium.Color.YELLOW,
                   fill: Cesium.Color.YELLOW.withAlpha(0.2),
-                  strokeWidth: 2,
+                  strokeWidth: 1,
                 });
                 viewerRef.current.dataSources.add(dataSource);
                 const center = taskReport.map_center;
