@@ -215,7 +215,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   // أحداث التحديد في DOM overlay (اختيار مستطيل)
   useEffect(() => {
     const container = containerRef.current;
-    const canvas = viewerRef.current?.scene?.canvas || viewerRef.current?.canvas;
+    const canvas = viewerRef.current?.scene?.canvas || viewerRef.current?.canvas || container?.querySelector('canvas');
     const target = canvas instanceof HTMLElement ? canvas : container;
     if (!target) return;
 
