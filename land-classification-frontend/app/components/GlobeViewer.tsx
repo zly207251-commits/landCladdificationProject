@@ -79,6 +79,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [date, setDate] = useState(formatDate(new Date()));
   const [selectedProvider, setSelectedProvider] = useState<string>('google');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
+  const [tileZoom, setTileZoom] = useState<number>(17);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
 
   const createImageryProvider = (providerId: string) => {
@@ -320,7 +321,71 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   };
 
   const saveSelectionAsTiff = async () => {
-    if (!selectionRect || !viewerRef.current) return alert('لم تحدد منطقة للحفظ');
+      try {
+        const topLeft = getLonLatFromScreen(selectionRect.x, selectionRect.y);
+        const bottomRight = getLonLatFromScreen(selectionRect.x + selectionRect.width, selectionRect.y + selectionRect.height);
+        if (!topLeft || !bottomRight) {
+          throw new Error('تعذر تحويل الحقول المحددة إلى إحداثيات جغرافية. حاول اختيار منطقة أقرب إلى سطح الكرة الأرضية.');
+        }
+
+        const minLon = Math.min(topLeft.lon, bottomRight.lon);
+        const maxLon = Math.max(topLeft.lon, bottomRight.lon);
+        const minLat = Math.min(topLeft.lat, bottomRight.lat);
+        const maxLat = Math.max(topLeft.lat, bottomRight.lat);
+
+        const base = API_CONFIG.baseURL || 'http://localhost:8000';
+
+        if (taskId) {
+          const downloadUrl = `${base}/tasks/${taskId}/crop?min_lon=${encodeURIComponent(minLon)}&min_lat=${encodeURIComponent(minLat)}&max_lon=${encodeURIComponent(maxLon)}&max_lat=${encodeURIComponent(maxLat)}`;
+          setExportLink(downloadUrl);
+          window.open(downloadUrl, '_blank');
+          return;
+        }
+
+        // بدون taskId: استخدم تركيب البلاطات من مصدر الصور الحالي
+        // احصل على قالب البلاطات حسب الموفر المحدد
+        const getTileTemplate = () => {
+          switch (selectedProvider) {
+            case 'osm':
+              return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+            case 'esri':
+              // note: ESRI uses {z}/{y}/{x} in some URLs, backend .format handles named args
+              return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+            case 'google':
+              return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
+            case 'gibs_truecolor':
+              return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
+            case 'gibs_viirs':
+              return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
+            default:
+              return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+          }
+        };
+
+        const tile_template = getTileTemplate();
+
+        // تحذير ترخيص لمزود Google
+        if (selectedProvider === 'google') {
+          const ok = window.confirm('مصدر الصور Google قد يكون محدود الترخيص — هل تضمن أنك مخوّل لاستخدامه لهذا الغرض؟ اضغط موافق للمتابعة.');
+          if (!ok) return;
+        }
+
+        const params = new URLSearchParams();
+        params.set('tile_template', tile_template);
+        params.set('zoom', String(tileZoom));
+        params.set('min_lon', String(minLon));
+        params.set('min_lat', String(minLat));
+        params.set('max_lon', String(maxLon));
+        params.set('max_lat', String(maxLat));
+
+        const downloadUrl = `${base}/crop/from_tiles?${params.toString()}`;
+        setExportLink(downloadUrl);
+        window.open(downloadUrl, '_blank');
+
+      } catch (e:any) {
+        console.error(e);
+        alert('خطأ أثناء طلب القص الجغرافي: ' + (e?.message || e));
+      }
     if (!taskId) return alert('لا يوجد معرف مهمة مرتبط لتصدير القص الجغرافي');
 
     try {
@@ -466,6 +531,11 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               <p className="mt-2 text-xs text-slate-500">
                 {IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.description}
               </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Zoom للبلاطات (Tile zoom)</label>
+              <input type="number" min={0} max={22} value={tileZoom} onChange={(e)=>setTileZoom(Number(e.target.value))} className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none" />
+              <p className="mt-2 text-xs text-slate-500">اختر مستوى التكبير المستخدم لتحميل البلاطات (كلما زاد الرقم زادت الدقة).</p>
             </div>
             {selectedProvider.startsWith('gibs') && (
               <div>
