@@ -215,11 +215,13 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   // أحداث التحديد في DOM overlay (اختيار مستطيل)
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const canvas = viewerRef.current?.scene?.canvas || viewerRef.current?.canvas;
+    const target = canvas instanceof HTMLElement ? canvas : container;
+    if (!target) return;
 
     const onMouseDown = (ev: MouseEvent) => {
       if (!selecting) return;
-      const rect = container.getBoundingClientRect();
+      const rect = (container || target).getBoundingClientRect();
       const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
       setStartPoint({ x, y });
@@ -235,7 +237,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!selecting || !startPoint || !selectionRef.current) return;
-      const rect = container.getBoundingClientRect();
+      const rect = (container || target).getBoundingClientRect();
       const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
       const left = Math.min(startPoint.x, x);
@@ -249,7 +251,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
 
     const onMouseUp = (ev: MouseEvent) => {
-      if (!selecting || !startPoint || !selectionRef.current) return;
+      if (!selecting || !startPoint || !selectionRef.current || !container) return;
       const rect = selectionRef.current.getBoundingClientRect();
       const parentRect = container.getBoundingClientRect();
       const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
@@ -258,16 +260,16 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       setStartPoint(null);
     };
 
-    container.addEventListener('mousedown', onMouseDown);
+    target.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
 
     return () => {
-      container.removeEventListener('mousedown', onMouseDown);
+      target.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [selecting, startPoint]);
+  }, [selecting, startPoint, isLoaded]);
 
   // تعطيل تحكم الكاميرا في Cesium أثناء التحديد لمنع السحب
   useEffect(() => {
