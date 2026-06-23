@@ -29,7 +29,8 @@ class LandSegmenterSAM:
                     points_per_side=16,
                     pred_iou_thresh=0.45,
                     stability_score_thresh=0.30,
-                    min_mask_region_area=500,
+                    # زيادة الحد الأدنى لمنطقة القناع للتقليل من البقع الصغيرة والضوضاء
+                    min_mask_region_area=800,
                 )
                 self.use_sam = True
                 print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
@@ -79,17 +80,35 @@ class LandSegmenterSAM:
                 segments: List[Dict[str, Any]] = []
                 for idx, m in enumerate(masks, start=1):
                     segmentation = m['segmentation'].astype(np.uint8)
-                    seg255 = (segmentation * 255).astype(np.uint8)
+                    # تنظيف قناع SAM: عمليات مصلحية لإزالة الشوائب والبقع الصغيرة
+                    try:
+                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                        seg_clean = cv2.morphologyEx((segmentation * 255).astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+                        seg_clean = cv2.morphologyEx(seg_clean, cv2.MORPH_OPEN, kernel)
+                        seg255 = seg_clean
+                        segmentation = (seg255 > 127).astype(np.uint8)
+                    except Exception:
+                        seg255 = (segmentation * 255).astype(np.uint8)
                     contours, _ = cv2.findContours(seg255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     polygons = []
+                    from shapely.geometry import Polygon
                     for cnt in contours:
                         area = cv2.contourArea(cnt)
-                        if area < 120:
+                        # تجاهل المضلعات الصغيرة جداً (بعد زيادة عتبة min_mask_region_area)
+                        if area < 500:
                             continue
                         epsilon = 0.01 * cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, epsilon, True)
                         if len(approx) >= 3:
-                            polygons.append(approx.reshape(-1, 2).tolist())
+                            pts = approx.reshape(-1, 2)
+                            try:
+                                poly = Polygon(pts)
+                                # تبسيط الشكل للتقليل من النقاط الزائدة مع المحافظة على الطوبولوجيا
+                                simple = poly.simplify(1.0, preserve_topology=True)
+                                if not simple.is_empty and simple.is_valid and len(simple.exterior.coords) >= 3:
+                                    polygons.append([list(map(float, c)) for c in simple.exterior.coords[:-1]])
+                            except Exception:
+                                polygons.append(pts.tolist())
                     if not polygons:
                         print(f"  - mask {idx} dropped after contour filter ({len(contours)} contours)")
                         continue
@@ -346,17 +365,19 @@ class SegFormerSemanticSegmenter:
         category_map = {}
         for idx, label in self.id2label.items():
             normalized = label.lower()
+            # نُحدد فقط تحويلات واضحة؛ أي فئة غير واضحة تُعطى 'unknown' لتجنّب التصنيف الخاطئ
             if any(token in normalized for token in ["road", "street", "highway", "runway", "bridge", "path", "sidewalk", "track"]):
                 category_map[int(idx)] = "roads"
             elif any(token in normalized for token in ["building", "house", "tower", "wall", "garage", "factory", "church", "hut", "office", "hotel", "stadium"]):
                 category_map[int(idx)] = "buildings"
             elif any(token in normalized for token in ["river", "lake", "pond", "sea", "ocean", "water", "canal", "swamp", "wetland", "reservoir"]):
                 category_map[int(idx)] = "water"
-            elif any(token in normalized for token in ["grass", "field", "crop", "meadow", "forest", "tree", "vegetation", "plant", "farm", "farmland", "orchard", "park", "garden"]):
+            elif any(token in normalized for token in ["grass", "field", "crop", "meadow", "farm", "farmland", "orchard", "vegetation"]):
                 category_map[int(idx)] = "agricultural"
-            elif any(token in normalized for token in ["sand", "dirt", "rock", "mountain", "desert", "gravel", "soil", "cliff", "bare", "snow", "ice"]):
+            elif any(token in normalized for token in ["sand", "dirt", "rock", "mountain", "desert", "gravel", "soil", "cliff"]):
                 category_map[int(idx)] = "arid"
             else:
+                # اجعل الافتراضي محافظًا: نتركه 'unknown' بدلاً من تخمين خاطئ
                 category_map[int(idx)] = "unknown"
         return category_map
 

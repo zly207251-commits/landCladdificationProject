@@ -41,9 +41,21 @@ class LandAgent(BaseAgent):
                 message_type="ACTION",
                 content=f"اكتُشفت الطبقات التالية: {', '.join(layer_names)}. سيتم تصنيفها جميعاً." 
             )
+            non_land = {"buildings", "water", "roads"}
             for layer in layers:
                 layer_id = layer["layer_id"]
+                layer_name = (layer.get("layer_name") or "").lower()
                 area_sqm = layer["area_sq_meters"]
+
+                # تخطّي الطبقات التي نعرف أنها ليست أراضٍ
+                if layer_name in non_land:
+                    self.message_bus.publish(
+                        task_id=task_id,
+                        sender=self.name,
+                        message_type="INFO",
+                        content=f"تجاوزت طبقة غير أرضية: {layer_name} (layer_id={layer_id})"
+                    )
+                    continue
                 
                 # تصنيف محلي ديناميكي يعتمد على مساحة قطعة الأرض الزراعية (من قاموس الأوقاف المحلي):
                 # - إذا كانت المساحة > 10,000 م² -> تصنف 'حَوْل' أو 'حَرُورَة' (حقول سهلية شاسعة)
