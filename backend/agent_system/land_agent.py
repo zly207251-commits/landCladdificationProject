@@ -23,16 +23,24 @@ class LandAgent(BaseAgent):
             content="بدء تصنيف وتوصيف طبقة الأراضي المستخرجة وتطبيق القاموس المحلي."
         )
         
-        # استرجاع طبقة الأراضي من الذاكرة المشتركة SQLite
-        layers = memory.get_task_layers(task_id, layer_name="lands")
+        # استرجاع كل طبقات المهمة من الذاكرة المشتركة SQLite.
+        # يستخدم ProjectionAgent أسماء الطبقات بحسب التصنيف المستخلص من SAM، لذلك لا نعتمد على اسم ثابت 'lands'.
+        layers = memory.get_task_layers(task_id)
         if not layers:
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
                 message_type="WARNING",
-                content="لم يتم العثور على طبقة 'الأراضي' في الذاكرة المشتركة لمعالجتها."
+                content="لم يتم العثور على أي طبقات في الذاكرة المشتركة لمعالجتها."
             )
         else:
+            layer_names = sorted({layer['layer_name'] for layer in layers})
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content=f"اكتُشفت الطبقات التالية: {', '.join(layer_names)}. سيتم تصنيفها جميعاً." 
+            )
             for layer in layers:
                 layer_id = layer["layer_id"]
                 area_sqm = layer["area_sq_meters"]
