@@ -9,6 +9,7 @@ class LandSegmenterSAM:
     def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True):
         self.use_sam = False
         self.mask_generator = None
+        self.semantic_segmenter = None
         self.model_path = model_path
         self.fail_fast = fail_fast
         
@@ -46,6 +47,14 @@ class LandSegmenterSAM:
             else:
                 print(msg)
                 print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
+
+        # محاولة تحميل نموذج SegFormer للتصنيف الدلالي داخل أقنعة SAM
+        try:
+            self.semantic_segmenter = SegFormerSemanticSegmenter()
+            print("✔️ تم تحميل SegFormer بنجاح! سيتم استخدامه لتحسين تصنيف الأقنعة.")
+        except Exception as e:
+            print(f"⚠️ لم يتم تحميل SegFormer: {e}")
+            self.semantic_segmenter = None
 
     def segment_image(self, image):
         # فحوصات أولية للصورة (Fail-fast)
@@ -92,13 +101,22 @@ class LandSegmenterSAM:
                         'score': score,
                     })
                 print(f"🔍 SAM produced {len(segments)} segments after polygon filtering")
+                semantic_map = None
+                if self.semantic_segmenter is not None:
+                    try:
+                        semantic_map = self.semantic_segmenter.segment_image(image)
+                    except Exception as e:
+                        print(f"⚠️ فشل SegFormer أثناء معالجة الصورة: {e}")
+                        semantic_map = None
                 if segments:
                     if not hasattr(self, 'color_classifier'):
                         self.color_classifier = LandColorClassifier()
                     for seg in segments:
                         try:
-                            lbl = self.color_classifier.classify_mask(image, seg['mask'])
-                            seg['label'] = lbl
+                            if semantic_map is not None and seg['mask'] is not None:
+                                seg['label'] = self.semantic_segmenter.classify_mask(seg['mask'], semantic_map)
+                            else:
+                                seg['label'] = self.color_classifier.classify_mask(image, seg['mask'])
                         except Exception:
                             seg['label'] = 'unknown'
                 if len(segments) < 3:
@@ -173,13 +191,24 @@ class LandSegmenterSAM:
         if not hasattr(self, 'color_classifier'):
             self.color_classifier = LandColorClassifier()
 
+        semantic_map = None
+        if self.semantic_segmenter is not None:
+            try:
+                semantic_map = self.semantic_segmenter.segment_image(image)
+            except Exception as e:
+                print(f"⚠️ فشل SegFormer أثناء معالجة fallback: {e}")
+                semantic_map = None
+
         segments: List[Dict[str, Any]] = []
         for poly in polygons:
             mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
             pts = np.array(poly, dtype=np.int32).reshape((-1, 2))
             cv2.fillPoly(mask, [pts], 1)
             try:
-                lbl = self.color_classifier.classify_mask(image, mask)
+                if semantic_map is not None:
+                    lbl = self.semantic_segmenter.classify_mask(mask, semantic_map)
+                else:
+                    lbl = self.color_classifier.classify_mask(image, mask)
             except Exception:
                 lbl = 'unknown'
             segments.append({'label': lbl, 'mask': mask, 'polygons': [poly], 'score': 0.5})
@@ -294,3 +323,71 @@ class LandColorClassifier:
         
         ratios = {k: v / total_pixels for k, v in counts.items() if v}
         return ratios, counts
+
+
+class SegFormerSemanticSegmenter:
+    MODEL_NAME = "nvidia/segformer-b0-finetuned-ade-512-512"
+
+    def __init__(self):
+        try:
+            import torch
+            from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
+        except ImportError as e:
+            raise RuntimeError("Install transformers to use SegFormer: pip install transformers timm") from e
+
+        self.torch = torch
+        self.device = "cuda" if self.torch.cuda.is_available() else "cpu"
+        self.processor = AutoImageProcessor.from_pretrained(self.MODEL_NAME)
+        self.model = SegformerForSemanticSegmentation.from_pretrained(self.MODEL_NAME).to(self.device)
+        self.id2label = self.model.config.id2label
+        self.category_map = self._build_category_map()
+
+    def _build_category_map(self):
+        category_map = {}
+        for idx, label in self.id2label.items():
+            normalized = label.lower()
+            if any(token in normalized for token in ["road", "street", "highway", "runway", "bridge", "path", "sidewalk", "track"]):
+                category_map[int(idx)] = "roads"
+            elif any(token in normalized for token in ["building", "house", "tower", "wall", "garage", "factory", "church", "hut", "office", "hotel", "stadium"]):
+                category_map[int(idx)] = "buildings"
+            elif any(token in normalized for token in ["river", "lake", "pond", "sea", "ocean", "water", "canal", "swamp", "wetland", "reservoir"]):
+                category_map[int(idx)] = "water"
+            elif any(token in normalized for token in ["grass", "field", "crop", "meadow", "forest", "tree", "vegetation", "plant", "farm", "farmland", "orchard", "park", "garden"]):
+                category_map[int(idx)] = "agricultural"
+            elif any(token in normalized for token in ["sand", "dirt", "rock", "mountain", "desert", "gravel", "soil", "cliff", "bare", "snow", "ice"]):
+                category_map[int(idx)] = "arid"
+            else:
+                category_map[int(idx)] = "unknown"
+        return category_map
+
+    def segment_image(self, image: np.ndarray) -> np.ndarray:
+        if image is None:
+            raise ValueError("Invalid image provided to SegFormer semantic segmentation")
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        inputs = self.processor(images=image_rgb, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        logits = outputs.logits.detach().cpu().numpy()[0]
+        seg = np.argmax(logits, axis=0).astype(np.int32)
+        seg = cv2.resize(seg, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+        return seg
+
+    def classify_mask(self, mask: np.ndarray, semantic_map: np.ndarray) -> str:
+        if mask is None or semantic_map is None:
+            return "unknown"
+        mask_bool = mask.astype(bool)
+        if mask_bool.sum() == 0:
+            return "unknown"
+
+        labels = semantic_map[mask_bool]
+        if labels.size == 0:
+            return "unknown"
+
+        counts = np.bincount(labels)
+        if counts.size == 0:
+            return "unknown"
+
+        label_id = int(np.argmax(counts))
+        return self.category_map.get(label_id, "unknown")
