@@ -24,7 +24,9 @@ export default function ResultsImagesPage() {
       setLoading(true);
       setError(null);
       try {
-        const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`);
+        const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`, {
+          cache: 'no-store'
+        });
         if (!resp.ok) {
           const text = await resp.text();
           throw new Error(`فشل في جلب تقرير المهمة: ${resp.status} ${text}`);
@@ -58,6 +60,13 @@ export default function ResultsImagesPage() {
               className="inline-flex items-center rounded-full bg-white px-4 py-2 text-slate-700 border border-slate-200 hover:bg-slate-50"
             >
               العودة لصفحة النتائج
+            </button>
+            <button
+              type="button"
+              onClick={fetchReport}
+              className="inline-flex items-center rounded-full bg-slate-100 px-4 py-2 text-slate-700 border border-slate-200 hover:bg-slate-200"
+            >
+              تحديث التقرير
             </button>
             <Link
               href="/"

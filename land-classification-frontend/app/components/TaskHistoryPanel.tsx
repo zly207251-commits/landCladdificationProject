@@ -18,25 +18,27 @@ export default function TaskHistoryPanel() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchTasks = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.tasks}?limit=10`);
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(`Server ${resp.status}: ${text}`);
-        }
-        const data = await resp.json();
-        setTasks(data.tasks || []);
-      } catch (err: any) {
-        setError(err?.message || "تعذر جلب قائمة المهام.");
-      } finally {
-        setLoading(false);
+  const fetchTasks = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.tasks}?limit=10`, {
+        cache: 'no-store',
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Server ${resp.status}: ${text}`);
       }
-    };
+      const data = await resp.json();
+      setTasks(data.tasks || []);
+    } catch (err: any) {
+      setError(err?.message || "تعذر جلب قائمة المهام.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchTasks();
   }, []);
 
@@ -58,7 +60,7 @@ export default function TaskHistoryPanel() {
         </div>
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={fetchTasks}
           className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
         >
           تحديث القائمة

@@ -49,25 +49,26 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
     return AGENT_COLORS[agent.toUpperCase()] || 'border-gray-200 bg-gray-50';
   };
 
-  useEffect(() => {
-    const fetchReport = async () => {
-      setLoading(true);
-      try {
-        const url = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`;
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(`Server ${resp.status}: ${text}`);
-        }
-        const data = await resp.json();
-        setReport(data);
-      } catch (err: any) {
-        setError(err?.message || 'خطأ في جلب التقرير');
-      } finally {
-        setLoading(false);
+  const fetchReport = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`;
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Server ${resp.status}: ${text}`);
       }
-    };
+      const data = await resp.json();
+      setReport(data);
+    } catch (err: any) {
+      setError(err?.message || 'خطأ في جلب التقرير');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchReport();
   }, [taskId]);
 
@@ -318,6 +319,13 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
                     عرض المهمة في Globe
                   </a>
                 )}
+                <button
+                  type="button"
+                  onClick={fetchReport}
+                  className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  تحديث التقرير
+                </button>
                 <button
                   type="button"
                   onClick={toggleLogs}
