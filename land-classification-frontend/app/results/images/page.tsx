@@ -19,28 +19,30 @@ export default function ResultsImagesPage() {
       setLoading(false);
       return;
     }
-
-    const fetchReport = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`, {
-          cache: 'no-store'
-        });
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(`فشل في جلب تقرير المهمة: ${resp.status} ${text}`);
-        }
-        setReport(await resp.json());
-      } catch (err: any) {
-        setError(err?.message || "حدث خطأ أثناء تحميل التقرير.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
+    // عندما يتغير taskId نعيد جلب التقرير
     fetchReport();
   }, [taskId]);
+
+  // تعريف الدالة على مستوى المكون بحيث يمكن إعادة استخدامها (مثلاً من زر التحديث)
+  const fetchReport = async () => {
+    if (!taskId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.report.replace('{task_id}', taskId)}`, {
+        cache: "no-store",
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`فشل في جلب تقرير المهمة: ${resp.status} ${text}`);
+      }
+      setReport(await resp.json());
+    } catch (err: any) {
+      setError(err?.message || "حدث خطأ أثناء تحميل التقرير.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
   const processedImageSrc = report?.processed_image_url ? `${API_CONFIG.baseURL}${report.processed_image_url}` : null;
