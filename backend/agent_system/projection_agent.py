@@ -302,7 +302,9 @@ class ProjectionAgent(BaseAgent):
             return None
 
     def _pixel_to_geo(self, pt: List[int], transform: Tuple[float, float, float, float, float, float]) -> List[float]:
-        a, b, c, d, e, f = transform
+        # rasterio.transform.to_gdal() returns transform in GDAL order:
+        # (c, a, b, f, d, e)
+        c, a, b, f, d, e = transform
         col, row = pt[0], pt[1]
         x = a * col + b * row + c
         y = d * col + e * row + f
