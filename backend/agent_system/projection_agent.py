@@ -103,6 +103,17 @@ class ProjectionAgent(BaseAgent):
             )
             segments = [{'label': 'unknown', 'polygons': [[[100, 100], [600, 100], [600, 600], [100, 600], [100, 100]]], 'mask': None, 'score': 0.5}]
 
+        segment_polygons_count = sum(len(seg.get('polygons', [])) for seg in segments)
+        self.message_bus.publish(
+            task_id=task_id,
+            sender=self.name,
+            message_type="ACTION",
+            content=(
+                f"تم استلام {len(segments)} قطاعات من المقطع، تحتوي على {segment_polygons_count} مضلعات. "
+                f"سيتم معالجة كل منها وتحويلها إلى طبقات."
+            )
+        )
+
         # color map: BGR for OpenCV
         COLOR_MAP = {
             'agricultural': (34, 139, 34),
@@ -125,7 +136,13 @@ class ProjectionAgent(BaseAgent):
                 x = [pt[0] for pt in poly]
                 y = [pt[1] for pt in poly]
                 pixel_area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-                if pixel_area < 500:
+                if pixel_area < 150:
+                    self.message_bus.publish(
+                        task_id=task_id,
+                        sender=self.name,
+                        message_type="DEBUG",
+                        content=f"تجاوزت قطع صغيرة: مساحة بكسل={pixel_area:.1f} أقل من الحد 150."
+                    )
                     continue
 
                 area_sqm = pixel_area * (pixel_scale ** 2)

@@ -26,9 +26,9 @@ class LandSegmenterSAM:
                 self.mask_generator = SamAutomaticMaskGenerator(
                     model=sam,
                     points_per_side=16,
-                    pred_iou_thresh=0.80,
-                    stability_score_thresh=0.88,
-                    min_mask_region_area=2000,
+                    pred_iou_thresh=0.45,
+                    stability_score_thresh=0.30,
+                    min_mask_region_area=500,
                 )
                 self.use_sam = True
                 print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
@@ -66,23 +66,24 @@ class LandSegmenterSAM:
         if self.use_sam and self.mask_generator:
             try:
                 masks = self.mask_generator.generate(image)
+                print(f"🔍 SAM generated {len(masks)} masks")
                 segments: List[Dict[str, Any]] = []
-                for m in masks:
+                for idx, m in enumerate(masks, start=1):
                     segmentation = m['segmentation'].astype(np.uint8)
-                    # find contours per mask
                     seg255 = (segmentation * 255).astype(np.uint8)
                     contours, _ = cv2.findContours(seg255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     polygons = []
                     for cnt in contours:
                         area = cv2.contourArea(cnt)
-                        if area < 1500:
+                        if area < 120:
                             continue
                         epsilon = 0.01 * cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, epsilon, True)
-                        polygons.append(approx.reshape(-1, 2).tolist())
+                        if len(approx) >= 3:
+                            polygons.append(approx.reshape(-1, 2).tolist())
                     if not polygons:
+                        print(f"  - mask {idx} dropped after contour filter ({len(contours)} contours)")
                         continue
-                    # classify the mask color/semantics roughly
                     score = float(m.get('stability_score', 1.0)) if isinstance(m, dict) else 1.0
                     segments.append({
                         'label': 'unknown',
@@ -90,7 +91,7 @@ class LandSegmenterSAM:
                         'polygons': polygons,
                         'score': score,
                     })
-                # attempt to label segments using color classifier
+                print(f"🔍 SAM produced {len(segments)} segments after polygon filtering")
                 if segments:
                     if not hasattr(self, 'color_classifier'):
                         self.color_classifier = LandColorClassifier()
@@ -100,6 +101,12 @@ class LandSegmenterSAM:
                             seg['label'] = lbl
                         except Exception:
                             seg['label'] = 'unknown'
+                if len(segments) < 3:
+                    fallback_segments = self._fallback_segmentation(image, min_area=150)
+                    print(f"🔄 Using fallback segmentation: {len(fallback_segments)} fallback segments")
+                    for fb in fallback_segments:
+                        if not any(self._is_duplicate_segment(fb, seg) for seg in segments):
+                            segments.append(fb)
                 return segments
             except Exception as e:
                 msg = f"⚠️ خطأ في SAM أثناء التجزئة: {e}"
@@ -113,30 +120,33 @@ class LandSegmenterSAM:
         if not self.use_sam and self.fail_fast:
             raise RuntimeError("SAM model not available and fail_fast=True")
 
-        return self._fallback_segmentation(image)
+        return self._fallback_segmentation(image, min_area=150)
 
-    def _fallback_segmentation(self, image):
+    def _fallback_segmentation(self, image, min_area: int = 150):
         polygons = []
         
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (9, 9), 0)
-        edges = cv2.Canny(blurred, 50, 150)
+        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        edges = cv2.Canny(blurred, 40, 120)
         
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        closed = cv2.dilate(closed, kernel, iterations=2)
+        closed = cv2.erode(closed, kernel, iterations=1)
         
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        print(f"🔍 Fallback detected {len(contours)} contours")
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if 1500 < area < (image.shape[0] * image.shape[1] * 0.9):
+            if min_area < area < (image.shape[0] * image.shape[1] * 0.85):
                 epsilon = 0.02 * cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, epsilon, True)
                 if len(approx) >= 3:
                     polygons.append(approx.reshape(-1, 2).tolist())
-                    
         if not polygons:
             h, w = image.shape[:2]
             polygons.append([[50, 50], [w-50, 50], [w-50, h-50], [50, h-50]])
-
-        # wrap fallback polygons into segment-like dicts with simple labeling
+        print(f"🔍 Fallback produced {len(polygons)} polygons")
         if not hasattr(self, 'color_classifier'):
             self.color_classifier = LandColorClassifier()
 
@@ -150,8 +160,17 @@ class LandSegmenterSAM:
             except Exception:
                 lbl = 'unknown'
             segments.append({'label': lbl, 'mask': mask, 'polygons': [poly], 'score': 0.5})
-
         return segments
+
+    def _is_duplicate_segment(self, seg_a: Dict[str, Any], seg_b: Dict[str, Any]) -> bool:
+        if not seg_a.get('polygons') or not seg_b.get('polygons'):
+            return False
+        a0 = np.array(seg_a['polygons'][0], dtype=np.float32)
+        b0 = np.array(seg_b['polygons'][0], dtype=np.float32)
+        if a0.shape != b0.shape:
+            return False
+        dist = np.linalg.norm(a0 - b0, axis=1)
+        return float(np.mean(dist)) < 8.0
 
 
 class LandColorClassifier:
