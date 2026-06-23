@@ -128,17 +128,40 @@ class LandSegmenterSAM:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (7, 7), 0)
         edges = cv2.Canny(blurred, 40, 120)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        combined = cv2.bitwise_or(edges, thresh)
         
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
         closed = cv2.dilate(closed, kernel, iterations=2)
         closed = cv2.erode(closed, kernel, iterations=1)
         
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         print(f"🔍 Fallback detected {len(contours)} contours")
+        image_area = image.shape[0] * image.shape[1]
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if min_area < area < (image.shape[0] * image.shape[1] * 0.85):
+            x, y, w, h = cv2.boundingRect(cnt)
+            if area < min_area or area > image_area * 0.90:
+                continue
+            if x <= 2 or y <= 2 or x + w >= image.shape[1] - 2 or y + h >= image.shape[0] - 2:
+                continue
+            epsilon = 0.02 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            if len(approx) >= 3:
+                polygons.append(approx.reshape(-1, 2).tolist())
+        if not polygons:
+            print("🔍 Fallback did not extract valid contours, محاولة التقسيم البسيط.")
+            mask = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 7)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                x, y, w, h = cv2.boundingRect(cnt)
+                if area < min_area or area > image_area * 0.90:
+                    continue
+                if x <= 2 or y <= 2 or x + w >= image.shape[1] - 2 or y + h >= image.shape[0] - 2:
+                    continue
                 epsilon = 0.02 * cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, epsilon, True)
                 if len(approx) >= 3:
@@ -200,23 +223,34 @@ class LandColorClassifier:
         mean_s = int(np.mean(s_vals))
         mean_v = int(np.mean(v_vals))
 
+        ys, xs = np.where(bin_mask > 0)
+        bbox_area = 1
+        if len(xs) > 0 and len(ys) > 0:
+            bbox_area = max(1, (xs.max() - xs.min() + 1) * (ys.max() - ys.min() + 1))
+        area = int(bin_mask.sum())
+        shape_ratio = float(area) / float(bbox_area)
+        image_area = image.shape[0] * image.shape[1]
+        is_large_area = area > (image_area * 0.15)
+
         # heuristics
-        # greenish -> agricultural
         if 35 <= mean_h <= 85 and mean_s > 40 and mean_v > 40:
             return 'agricultural'
-        # water (blue)
-        if 90 <= mean_h <= 140 and mean_s > 30 and mean_v > 30:
+        if 90 <= mean_h <= 140 and mean_s > 30 and mean_v > 20:
             return 'water'
-        # roads: low saturation, medium brightness
-        if mean_s < 60 and 80 <= mean_v <= 220:
+        if 10 <= mean_h <= 35 and mean_s > 30 and mean_v > 40:
+            return 'arid'
+
+        if mean_s < 50 and mean_v > 180 and shape_ratio < 0.35 and not is_large_area:
             return 'roads'
-        # buildings / concrete: low saturation high brightness or red hues
-        if (mean_h < 10 or mean_h > 160) and mean_v > 80:
-            return 'buildings'
-        if mean_s < 50 and mean_v > 140:
+        if mean_s < 40 and mean_v > 160 and shape_ratio < 0.45 and not is_large_area:
+            return 'roads'
+
+        if ((mean_h < 10 or mean_h > 160) and mean_v > 90 and mean_s > 20) or (mean_s < 35 and mean_v > 180 and not is_large_area):
             return 'buildings'
 
-        # fallback
+        if mean_s < 25 and mean_v > 140 and not is_large_area:
+            return 'roads'
+
         return 'unknown'
 
     def _get_color_ratios(self, image):

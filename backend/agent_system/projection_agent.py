@@ -82,16 +82,71 @@ class ProjectionAgent(BaseAgent):
             return {"next_agent": "end"}
 
         original_image = image.copy()
+        use_geo_metadata = bool(task_meta.get('use_geo_metadata', False))
+        geo_metadata = task_meta.get('geo_metadata') if task_meta.get('image_type') == 'geospatial' else None
+
+        if task_meta.get('image_type') == 'geospatial' and use_geo_metadata and geo_metadata is None:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content="محاولة قراءة بيانات GeoTIFF المضمنة من الملف لأن الصورة مصنفة كجيو-سبيشال."
+            )
+            geo_metadata = self._load_geo_metadata(image_path)
+            if geo_metadata:
+                task_meta['geo_metadata'] = geo_metadata
+                self.message_bus.publish(
+                    task_id=task_id,
+                    sender=self.name,
+                    message_type="ACTION",
+                    content="تم قراءة بيانات GeoTIFF المضمنة من الملف واختبارها بنجاح."
+                )
+
+        transform = None
+        geo_crs = None
+        if isinstance(geo_metadata, dict):
+            transform = geo_metadata.get('transform')
+            geo_crs = geo_metadata.get('crs')
+
+        has_valid_geo_metadata = (
+            transform is not None and
+            isinstance(transform, (list, tuple)) and
+            len(transform) == 6 and
+            isinstance(geo_crs, str) and
+            geo_crs != ''
+        )
+
+        if has_valid_geo_metadata:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content="سيتم استخدام بيانات الإسقاط الجغرافية المضمنة (GeoTIFF) لتحويل إحداثيات البكسل."
+            )
+        elif task_meta.get('image_type') == 'geospatial':
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content=(
+                    "الصورة مصنفة كـ geospatial لكن بيانات GeoTIFF المضمنة غير متوفرة أو غير صالحة. "
+                    "سيتم استخدام مقياس الرسم المرجعي البديل (pixel_scale/ref_lat/ref_lon)."
+                )
+            )
+
+        self.message_bus.publish(
+            task_id=task_id,
+            sender=self.name,
+            message_type="ACTION",
+            content=f"معايير الإسقاط المعتمدة: مقياس الرسم = {pixel_scale} متر/بكسل، الإحداثي المرجعي = ({ref_lat}, {ref_lon})"
+        )
+
         self.message_bus.publish(
             task_id=task_id,
             sender=self.name,
             message_type="ACTION",
             content="تشغيل نموذج SAM لاستخراج حدود قطع الأراضي من الصورة الجوية."
         )
-
-        use_geo_metadata = bool(task_meta.get('use_geo_metadata', False))
-        geo_metadata = task_meta.get('geo_metadata') if task_meta.get('image_type') == 'geospatial' else None
-        transform = geo_metadata.get('transform') if isinstance(geo_metadata, dict) else None
 
         segments = self.segmenter.segment_image(image)
         if not segments:
@@ -222,6 +277,29 @@ class ProjectionAgent(BaseAgent):
             "messages": state.get("messages", []) + [f"{self.name} has finished extracting land layers."],
             "next_agent": "coordinator"
         }
+
+    def _load_geo_metadata(self, image_path: str):
+        if rasterio is None:
+            return None
+        try:
+            with rasterio.open(image_path) as ds:
+                if ds.crs is None or ds.transform is None:
+                    return None
+                return {
+                    'crs': str(ds.crs),
+                    'transform': ds.transform.to_gdal(),
+                    'width': ds.width,
+                    'height': ds.height,
+                    'count': ds.count,
+                    'bounds': {
+                        'left': ds.bounds.left,
+                        'bottom': ds.bounds.bottom,
+                        'right': ds.bounds.right,
+                        'top': ds.bounds.top,
+                    }
+                }
+        except Exception:
+            return None
 
     def _pixel_to_geo(self, pt: List[int], transform: Tuple[float, float, float, float, float, float]) -> List[float]:
         a, b, c, d, e, f = transform
