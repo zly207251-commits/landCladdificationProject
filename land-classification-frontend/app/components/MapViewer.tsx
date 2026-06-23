@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useMap } from 'react-leaflet';
 import { MapContainer, TileLayer, LayersControl, GeoJSON, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -415,11 +416,12 @@ export default function MapViewer({
       <MapContainer
         center={mapCenter}
         zoom={mapZoom}
-        whenCreated={setMap}
         className="h-full w-full rounded-lg"
         scrollWheelZoom={true}
         style={{ height: '100%', width: '100%' }}
       >
+        {/* child component to capture map instance and expose it to parent */}
+        <MapSetter onMapReady={(m: L.Map) => setMap(m)} />
         <TileLayer
           attribution={useFallbackTiles ? '' : currentTileSource.attribution}
           url={useFallbackTiles ? fallbackTileUrl : currentTileSource.url}
@@ -485,4 +487,13 @@ export default function MapViewer({
       </div>
     </div>
   );
+}
+
+function MapSetter({ onMapReady }: { onMapReady: (m: L.Map) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    onMapReady(map);
+  }, [map, onMapReady]);
+  return null;
 }

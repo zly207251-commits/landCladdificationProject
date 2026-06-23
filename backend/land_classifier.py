@@ -6,31 +6,36 @@ from typing import List, Dict, Any, Optional
 
 
 class LandSegmenterSAM:
-    def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True):
+    def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True, use_fallback=False, min_mask_region_area=500):
         self.use_sam = False
         self.mask_generator = None
         self.semantic_segmenter = None
+        self.sam = None
         self.model_path = model_path
         self.fail_fast = fail_fast
+        self.use_fallback = use_fallback
+        self.min_mask_region_area = min_mask_region_area
+        self.points_per_side = 16
+        self.pred_iou_thresh = 0.45
+        self.stability_score_thresh = 0.30
         
         # محاولة تحميل نموذج SAM إذا كان موجوداً
         print("🔄 محاولة تحميل نموذج SAM...")
         if os.path.exists(model_path):
             try:
                 import torch
-                from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+                from segment_anything import sam_model_registry
 
                 sam = sam_model_registry["vit_b"](checkpoint=model_path)
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 sam.to(device)
+                self.sam = sam
 
-                self.mask_generator = SamAutomaticMaskGenerator(
-                    model=sam,
-                    points_per_side=16,
-                    pred_iou_thresh=0.45,
-                    stability_score_thresh=0.30,
-                    # زيادة الحد الأدنى لمنطقة القناع للتقليل من البقع الصغيرة والضوضاء
-                    min_mask_region_area=800,
+                self.mask_generator = self._create_mask_generator(
+                    points_per_side=self.points_per_side,
+                    pred_iou_thresh=self.pred_iou_thresh,
+                    stability_score_thresh=self.stability_score_thresh,
+                    min_mask_region_area=self.min_mask_region_area,
                 )
                 self.use_sam = True
                 print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
@@ -56,6 +61,63 @@ class LandSegmenterSAM:
         except Exception as e:
             print(f"⚠️ لم يتم تحميل SegFormer: {e}")
             self.semantic_segmenter = None
+
+    def _create_mask_generator(
+        self,
+        points_per_side: int,
+        pred_iou_thresh: float,
+        stability_score_thresh: float,
+        min_mask_region_area: int,
+    ):
+        from segment_anything import SamAutomaticMaskGenerator
+
+        return SamAutomaticMaskGenerator(
+            model=self.sam,
+            points_per_side=points_per_side,
+            pred_iou_thresh=pred_iou_thresh,
+            stability_score_thresh=stability_score_thresh,
+            min_mask_region_area=min_mask_region_area,
+        )
+
+    def apply_parameters(
+        self,
+        use_fallback: bool | None = None,
+        min_mask_region_area: int | None = None,
+        points_per_side: int | None = None,
+        pred_iou_thresh: float | None = None,
+        stability_score_thresh: float | None = None,
+    ):
+        if use_fallback is not None:
+            self.use_fallback = use_fallback
+
+        recreated = False
+        if min_mask_region_area is not None and min_mask_region_area != self.min_mask_region_area:
+            self.min_mask_region_area = min_mask_region_area
+            recreated = True
+        if points_per_side is not None and points_per_side != self.points_per_side:
+            self.points_per_side = points_per_side
+            recreated = True
+        if pred_iou_thresh is not None and pred_iou_thresh != self.pred_iou_thresh:
+            self.pred_iou_thresh = pred_iou_thresh
+            recreated = True
+        if stability_score_thresh is not None and stability_score_thresh != self.stability_score_thresh:
+            self.stability_score_thresh = stability_score_thresh
+            recreated = True
+
+        if recreated and self.sam is not None:
+            try:
+                self.mask_generator = self._create_mask_generator(
+                    points_per_side=self.points_per_side,
+                    pred_iou_thresh=self.pred_iou_thresh,
+                    stability_score_thresh=self.stability_score_thresh,
+                    min_mask_region_area=self.min_mask_region_area,
+                )
+                print(
+                    f"🔧 تم تطبيق إعدادات SAM: points_per_side={self.points_per_side}, pred_iou_thresh={self.pred_iou_thresh}, "
+                    f"stability_score_thresh={self.stability_score_thresh}, min_mask_region_area={self.min_mask_region_area}"
+                )
+            except Exception as e:
+                print(f"⚠️ فشل تحديث إعدادات SAM: {e}")
 
     def segment_image(self, image):
         # فحوصات أولية للصورة (Fail-fast)
@@ -94,17 +156,17 @@ class LandSegmenterSAM:
                     from shapely.geometry import Polygon
                     for cnt in contours:
                         area = cv2.contourArea(cnt)
-                        # تجاهل المضلعات الصغيرة جداً (بعد زيادة عتبة min_mask_region_area)
-                        if area < 500:
+                        # تجاهل المضلعات الصغيرة جدًا بناءً على إعداد min_mask_region_area
+                        if area < self.min_mask_region_area:
                             continue
-                        epsilon = 0.01 * cv2.arcLength(cnt, True)
+                        epsilon = 0.005 * cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, epsilon, True)
                         if len(approx) >= 3:
                             pts = approx.reshape(-1, 2)
                             try:
                                 poly = Polygon(pts)
-                                # تبسيط الشكل للتقليل من النقاط الزائدة مع المحافظة على الطوبولوجيا
-                                simple = poly.simplify(1.0, preserve_topology=True)
+                                # تبسيط الشكل بحذر للحفاظ على التفاصيل المكانية
+                                simple = poly.simplify(0.5, preserve_topology=True)
                                 if not simple.is_empty and simple.is_valid and len(simple.exterior.coords) >= 3:
                                     polygons.append([list(map(float, c)) for c in simple.exterior.coords[:-1]])
                             except Exception:
@@ -138,7 +200,7 @@ class LandSegmenterSAM:
                                 seg['label'] = self.color_classifier.classify_mask(image, seg['mask'])
                         except Exception:
                             seg['label'] = 'unknown'
-                if len(segments) < 3:
+                if self.use_fallback and len(segments) < 3:
                     fallback_segments = self._fallback_segmentation(image, min_area=150)
                     print(f"🔄 Using fallback segmentation: {len(fallback_segments)} fallback segments")
                     for fb in fallback_segments:

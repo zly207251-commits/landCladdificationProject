@@ -1,12 +1,21 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
+import Link from 'next/link';
 import { API_CONFIG } from '@/app/lib/map-config';
 
 interface UploadPortalProps {
   onUploadComplete?: (fileInfo: any) => void;
   onProcessingStart?: () => void;
+}
+
+interface SamSettings {
+  samUseFallback: boolean;
+  samMinMaskRegionArea: string;
+  samPointsPerSide: string;
+  samPredIoUThresh: string;
+  samStabilityScoreThresh: string;
 }
 
 type ImageType = 'regular' | 'geospatial';
@@ -23,6 +32,27 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [refLongitude, setRefLongitude] = useState('46.6753');
   const [geoCrs, setGeoCrs] = useState('EPSG:4326');
   const [useGeoMetadata, setUseGeoMetadata] = useState(true);
+  const [samUseFallback, setSamUseFallback] = useState(false);
+  const [samMinMaskRegionArea, setSamMinMaskRegionArea] = useState('500');
+  const [samPointsPerSide, setSamPointsPerSide] = useState('16');
+  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
+  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem('land_agent_sam_settings');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as SamSettings;
+      setSamUseFallback(parsed.samUseFallback ?? false);
+      setSamMinMaskRegionArea(parsed.samMinMaskRegionArea ?? '500');
+      setSamPointsPerSide(parsed.samPointsPerSide ?? '16');
+      setSamPredIoUThresh(parsed.samPredIoUThresh ?? '0.45');
+      setSamStabilityScoreThresh(parsed.samStabilityScoreThresh ?? '0.30');
+    } catch {
+      return;
+    }
+  }, []);
 
   // المناطق المتاحة (من الفرونت اند الحالي + PDF)
   const regions = [
@@ -67,6 +97,11 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       formData.append('pixel_scale_meters', pixelScale);
       formData.append('ref_latitude', refLatitude);
       formData.append('ref_longitude', refLongitude);
+      formData.append('sam_use_fallback', String(samUseFallback));
+      formData.append('sam_min_mask_region_area', samMinMaskRegionArea);
+      formData.append('sam_points_per_side', samPointsPerSide);
+      formData.append('sam_pred_iou_thresh', samPredIoUThresh);
+      formData.append('sam_stability_score_thresh', samStabilityScoreThresh);
 
       const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}`, {
         method: 'POST',
@@ -93,10 +128,20 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     }
   }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, onUploadComplete, onProcessingStart]);
 
+  const onDropRejected = useCallback((fileRejections: any[]) => {
+    try {
+      const reasons = fileRejections.map(fr => fr.errors.map((e: any) => e.message).join('; ')).join('; ');
+      setError(`الملف مرفوض: ${reasons}`);
+    } catch {
+      setError('الملف مرفوض أو غير مدعوم.');
+    }
+  }, []);
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: acceptedFiles,
-    maxSize: 100 * 1024 * 1024, // 100 ميغابايت (من PDF)
+    maxSize: 1024 * 1024 * 1024, // 1 جيجابايت
     multiple: false
   });
 
@@ -206,10 +251,11 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h3 className="font-semibold text-blue-800 mb-2">📋 مواصفات الرفع:</h3>
         <ul className="text-sm text-blue-700 space-y-1">
-          <li>• <strong>الحجم الأقصى:</strong> 100 ميغابكسل (من ملف PDF)</li>
+          <li>• <strong>الحجم الأقصى:</strong> 1 جيجابايت</li>
           <li>• <strong>الصيغ المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
           <li>• <strong>وقت المعالجة:</strong> 120 ثانية كحد أقصى (من PDF)</li>
           <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
+          <li>• <strong>إعدادات SAM:</strong> يتم تحميلها من صفحة <Link href="/settings" className="text-blue-700 underline">الإعدادات</Link></li>
         </ul>
       </div>
 
@@ -266,7 +312,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 يدعم: JPG, PNG, TIFF, GeoTIFF
               </p>
               <p className="text-xs text-gray-400 mt-1">
-                (حتى 100 ميغابكسل)
+                (حتى 1 جيجابايت)
               </p>
             </>
           )}

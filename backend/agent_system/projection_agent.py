@@ -102,6 +102,15 @@ class ProjectionAgent(BaseAgent):
                     content="تم قراءة بيانات GeoTIFF المضمنة من الملف واختبارها بنجاح."
                 )
 
+        # تطبيق إعدادات SAM الخاصة بالمهمة إذا كانت متاحة
+        self.segmenter.apply_parameters(
+            use_fallback=bool(task_meta.get('sam_use_fallback', self.segmenter.use_fallback)),
+            min_mask_region_area=int(task_meta.get('sam_min_mask_region_area', self.segmenter.min_mask_region_area)),
+            points_per_side=int(task_meta.get('sam_points_per_side', self.segmenter.points_per_side)),
+            pred_iou_thresh=float(task_meta.get('sam_pred_iou_thresh', self.segmenter.pred_iou_thresh)),
+            stability_score_thresh=float(task_meta.get('sam_stability_score_thresh', self.segmenter.stability_score_thresh)),
+        )
+
         transform = None
         geo_crs = None
         if isinstance(geo_metadata, dict):

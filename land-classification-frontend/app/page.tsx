@@ -65,6 +65,9 @@ export default function Home() {
             <Link href="/history" className="inline-flex items-center rounded-full bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700">
               📜 سجل المهام السابقة
             </Link>
+            <Link href="/settings" className="inline-flex items-center rounded-full bg-slate-100 px-4 py-2 text-slate-800 transition hover:bg-slate-200">
+              ⚙️ إعدادات SAM
+            </Link>
             <button
               onClick={handleBackToHome}
               className="inline-flex items-center rounded-full bg-white px-4 py-2 text-gray-700 shadow-sm transition hover:bg-gray-100"

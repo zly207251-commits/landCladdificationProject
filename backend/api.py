@@ -150,7 +150,12 @@ async def analyze_image_with_agents(
     use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
     pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
     ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
-    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية")
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
 ):
     """
     نقطة انطلاق التحليل:
@@ -165,11 +170,33 @@ async def analyze_image_with_agents(
     temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
     
+    # Stream-write the uploaded file in chunks and enforce a max upload size
+    MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+    size = 0
     try:
-        content = await file.read()
         with open(temp_file_path, "wb") as f:
-            f.write(content)
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB chunks
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    try:
+                        f.close()
+                        os.remove(temp_file_path)
+                    except Exception:
+                        pass
+                    raise HTTPException(status_code=413, detail="الملف أكبر من الحد المسموح (1 GB)")
+                f.write(chunk)
+    except HTTPException:
+        raise
     except Exception as e:
+        # cleanup partial file
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
         
     # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
@@ -179,7 +206,12 @@ async def analyze_image_with_agents(
         "use_geo_metadata": use_geo_metadata,
         "pixel_scale_meters": pixel_scale_meters,
         "ref_latitude": ref_latitude,
-        "ref_longitude": ref_longitude
+        "ref_longitude": ref_longitude,
+        "sam_use_fallback": sam_use_fallback,
+        "sam_min_mask_region_area": sam_min_mask_region_area,
+        "sam_points_per_side": sam_points_per_side,
+        "sam_pred_iou_thresh": sam_pred_iou_thresh,
+        "sam_stability_score_thresh": sam_stability_score_thresh,
     }
 
     if image_type == 'geospatial' and use_geo_metadata:
