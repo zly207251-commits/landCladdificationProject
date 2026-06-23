@@ -367,7 +367,7 @@ class SegFormerSemanticSegmenter:
         inputs = self.processor(images=image_rgb, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         self.model.eval()
-        with torch.no_grad():
+        with self.torch.no_grad():
             outputs = self.model(**inputs)
         logits = outputs.logits.detach().cpu().numpy()[0]
         seg = np.argmax(logits, axis=0).astype(np.int32)
