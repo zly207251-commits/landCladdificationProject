@@ -38,6 +38,67 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
+  const CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per chunk
+
+  const buildUploadId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `upload_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  };
+
+  const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+      const start = chunkIndex * CHUNK_SIZE_BYTES;
+      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
+      const chunkBlob = file.slice(start, end);
+      const formData = new FormData();
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', String(chunkIndex));
+      formData.append('total_chunks', String(totalChunks));
+      formData.append('filename', file.name);
+      formData.append('file', chunkBlob, file.name);
+      formData.append('image_type', metadata.image_type);
+      formData.append('geospatial_crs', metadata.geospatial_crs);
+      formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
+      formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
+      formData.append('ref_latitude', metadata.ref_latitude);
+      formData.append('ref_longitude', metadata.ref_longitude);
+      formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
+      formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
+      formData.append('sam_points_per_side', metadata.sam_points_per_side);
+      formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
+      formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+
+      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`فشل في رفع الجزء ${chunkIndex + 1} من ${totalChunks}: ${resp.status} ${txt}`);
+      }
+
+      setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+    }
+
+    const completeForm = new FormData();
+    completeForm.append('upload_id', uploadId);
+    const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
+      method: 'POST',
+      body: completeForm
+    });
+
+    if (!completeResp.ok) {
+      const txt = await completeResp.text();
+      throw new Error(`فشل إنهاء التحميل: ${completeResp.status} ${txt}`);
+    }
+
+    return completeResp.json();
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem('land_agent_sam_settings');
@@ -75,58 +136,48 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     setUploadProgress(0);
     setError(null);
 
+    const fileInfo = {
+      name: file.name,
+      size: (file.size / (1024 * 1024)).toFixed(2),
+      type: file.type,
+      lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
+      region: selectedRegion,
+      imageType,
+      geoCrs,
+      useGeoMetadata
+    };
+
+    setFileInfo(fileInfo);
+
+    const uploadMetadata = {
+      image_type: imageType,
+      geospatial_crs: geoCrs,
+      use_geo_metadata: useGeoMetadata,
+      pixel_scale_meters: pixelScale,
+      ref_latitude: refLatitude,
+      ref_longitude: refLongitude,
+      sam_use_fallback: samUseFallback,
+      sam_min_mask_region_area: samMinMaskRegionArea,
+      sam_points_per_side: samPointsPerSide,
+      sam_pred_iou_thresh: samPredIoUThresh,
+      sam_stability_score_thresh: samStabilityScoreThresh
+    };
+
     try {
-      const fileInfo = {
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2),
-        type: file.type,
-        lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
-        region: selectedRegion,
-        imageType,
-        geoCrs,
-        useGeoMetadata
-      };
-
-      setFileInfo(fileInfo);
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('image_type', imageType);
-      formData.append('geospatial_crs', geoCrs);
-      formData.append('use_geo_metadata', String(useGeoMetadata));
-      formData.append('pixel_scale_meters', pixelScale);
-      formData.append('ref_latitude', refLatitude);
-      formData.append('ref_longitude', refLongitude);
-      formData.append('sam_use_fallback', String(samUseFallback));
-      formData.append('sam_min_mask_region_area', samMinMaskRegionArea);
-      formData.append('sam_points_per_side', samPointsPerSide);
-      formData.append('sam_pred_iou_thresh', samPredIoUThresh);
-      formData.append('sam_stability_score_thresh', samStabilityScoreThresh);
-
-      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`فشل في رفع الملف: ${resp.status} ${txt}`);
-      }
-
-      const result = await resp.json();
+      const uploadId = buildUploadId();
+      const result = await uploadFileChunks(file, uploadId, uploadMetadata);
 
       setUploadProgress(100);
       setTimeout(() => setIsUploading(false), 400);
 
       if (onUploadComplete) onUploadComplete(result);
       if (onProcessingStart) onProcessingStart();
-
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف');
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, onUploadComplete, onProcessingStart]);
+  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
 
   const onDropRejected = useCallback((fileRejections: any[]) => {
     try {

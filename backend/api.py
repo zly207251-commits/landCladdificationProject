@@ -7,6 +7,7 @@ import cv2
 import io
 import uuid
 import os
+import json
 import mimetypes
 import importlib.util
 from pydantic import BaseModel
@@ -56,7 +57,64 @@ segmenter = LandSegmenterSAM()
 
 # إنشاء مجلد مؤقت لحفظ الصور المرفوعة للتحليل
 UPLOAD_DIR = "temp_uploads"
+CHUNK_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "chunks")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(CHUNK_UPLOAD_DIR, exist_ok=True)
+
+
+def get_chunk_dir(upload_id: str) -> str:
+    return os.path.join(CHUNK_UPLOAD_DIR, upload_id)
+
+
+def write_chunk_metadata(upload_id: str, metadata: dict):
+    chunk_dir = get_chunk_dir(upload_id)
+    os.makedirs(chunk_dir, exist_ok=True)
+    meta_path = os.path.join(chunk_dir, "metadata.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f)
+
+
+def read_chunk_metadata(upload_id: str) -> dict | None:
+    meta_path = os.path.join(get_chunk_dir(upload_id), "metadata.json")
+    if not os.path.exists(meta_path):
+        return None
+    with open(meta_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
+    chunk_dir = get_chunk_dir(upload_id)
+    with open(target_path, "wb") as target:
+        for idx in range(total_chunks):
+            chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
+            if not os.path.exists(chunk_path):
+                raise FileNotFoundError(f"الجزء مفقود: {idx}")
+            with open(chunk_path, "rb") as chunk_file:
+                while True:
+                    data = chunk_file.read(1024 * 1024)
+                    if not data:
+                        break
+                    target.write(data)
+
+
+def cleanup_chunk_upload(upload_id: str):
+    chunk_dir = get_chunk_dir(upload_id)
+    if os.path.exists(chunk_dir):
+        for root, dirs, files in os.walk(chunk_dir, topdown=False):
+            for name in files:
+                try:
+                    os.remove(os.path.join(root, name))
+                except Exception:
+                    pass
+            for name in dirs:
+                try:
+                    os.rmdir(os.path.join(root, name))
+                except Exception:
+                    pass
+        try:
+            os.rmdir(chunk_dir)
+        except Exception:
+            pass
 
 
 @app.post("/save_map_tiff", summary="حفظ صورة الخريطة كـ TIFF")
@@ -138,6 +196,106 @@ def run_agent_swarm_background(task_id: str, image_path: str):
             content=f"حدث خطأ أثناء تشغيل تدفق الوكلاء: {str(e)}"
         )
         memory.update_task_status(task_id, "FAILED")
+
+# --- نقطة نهاية رفع الملفات المقطعة ---
+
+@app.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
+async def upload_task_chunk(
+    upload_id: str = Form(..., description='معرف الرفع المقطّع الفريد'),
+    chunk_index: int = Form(..., description='فهرس الجزء الحالي بدءاً من 0'),
+    total_chunks: int = Form(..., description='إجمالي عدد الأجزاء'),
+    file: UploadFile = File(..., description="جزء من الملف"),
+    filename: str = Form(..., description='اسم الملف الكامل مع الامتداد'),
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
+    pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
+    ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
+):
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail="فهرس الجزء غير صالح")
+
+    upload_dir = get_chunk_dir(upload_id)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    metadata = {
+        "filename": filename,
+        "image_type": image_type,
+        "geospatial_crs": geospatial_crs,
+        "use_geo_metadata": use_geo_metadata,
+        "pixel_scale_meters": pixel_scale_meters,
+        "ref_latitude": ref_latitude,
+        "ref_longitude": ref_longitude,
+        "sam_use_fallback": sam_use_fallback,
+        "sam_min_mask_region_area": sam_min_mask_region_area,
+        "sam_points_per_side": sam_points_per_side,
+        "sam_pred_iou_thresh": sam_pred_iou_thresh,
+        "sam_stability_score_thresh": sam_stability_score_thresh,
+        "total_chunks": total_chunks
+    }
+
+    write_chunk_metadata(upload_id, metadata)
+
+    chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")
+    try:
+        with open(chunk_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"تعذر حفظ جزء الملف: {str(e)}")
+
+    return {
+        "upload_id": upload_id,
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "status": "chunk_received"
+    }
+
+
+@app.post("/tasks/analyze/chunk/complete", summary="Finalize chunked task upload and start analysis")
+async def complete_task_chunk_upload(
+    background_tasks: BackgroundTasks,
+    upload_id: str = Form(..., description='معرف الرفع المقطّع الفريد')
+):
+    metadata = read_chunk_metadata(upload_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="بيانات الرفع المقطّع غير موجودة")
+
+    total_chunks = metadata.get("total_chunks")
+    if total_chunks is None:
+        raise HTTPException(status_code=400, detail="عدد الأجزاء مفقود")
+
+    file_extension = os.path.splitext(metadata["filename"])[1] or ".bin"
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    temp_file_name = f"{task_id}{file_extension}"
+    temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
+
+    try:
+        merge_chunk_files(upload_id, temp_file_path, total_chunks)
+        cleanup_chunk_upload(upload_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")
+
+    task_metadata = {
+        key: value for key, value in metadata.items()
+        if key not in ["filename", "total_chunks"]
+    }
+
+    memory.create_task(task_id, temp_file_path, task_metadata)
+    background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+
+    return {
+        "message": "تم تجميع الأجزاء وبدء المهمة بنجاح.",
+        "task_id": task_id,
+        "status": "PENDING"
+    }
+
 
 # --- نهايات الاتصال الخاصة بالوكلاء (Agent Swarm Endpoints) ---
 
