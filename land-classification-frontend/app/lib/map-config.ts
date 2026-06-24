@@ -93,8 +93,9 @@ export const PROCESSING_STAGES = {
 };
 
 // إعدادات API (جاهزة للربط)
+const rawBaseURL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '/api';
 export const API_CONFIG = {
-  baseURL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '/api',
+  baseURL: rawBaseURL.replace(/\/+$/, ''),
   endpoints: {
     // Backend agent swarm endpoints
     upload: '/tasks/analyze',
@@ -104,4 +105,11 @@ export const API_CONFIG = {
     tasks: '/tasks'
   },
   timeout: 120000 // 120 ثانية (من PDF)
+};
+
+export const getApiUrl = (endpoint: string) => {
+  if (endpoint.startsWith('/')) {
+    return `${API_CONFIG.baseURL}${endpoint}`;
+  }
+  return `${API_CONFIG.baseURL}/${endpoint}`;
 };
