@@ -38,7 +38,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
-  const CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per chunk
+  const CHUNK_SIZE_BYTES = 50 * 1024 * 1024; // 50MB per chunk
+  const UPLOAD_CONCURRENCY = 3; // concurrent chunk uploads
 
   const buildUploadId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -49,41 +50,107 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
 
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
-      const start = chunkIndex * CHUNK_SIZE_BYTES;
-      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
-      const chunkBlob = file.slice(start, end);
-      const formData = new FormData();
-      formData.append('upload_id', uploadId);
-      formData.append('chunk_index', String(chunkIndex));
-      formData.append('total_chunks', String(totalChunks));
-      formData.append('filename', file.name);
-      formData.append('file', chunkBlob, file.name);
-      formData.append('image_type', metadata.image_type);
-      formData.append('geospatial_crs', metadata.geospatial_crs);
-      formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
-      formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
-      formData.append('ref_latitude', metadata.ref_latitude);
-      formData.append('ref_longitude', metadata.ref_longitude);
-      formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
-      formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
-      formData.append('sam_points_per_side', metadata.sam_points_per_side);
-      formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
-      formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+    const totalBytes = file.size;
 
-      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`, {
-        method: 'POST',
-        body: formData
+    // track progress per chunk (bytes uploaded so far for each active chunk)
+    const bytesUploading: Record<number, number> = {};
+    let bytesCompleted = 0;
+
+    const updateOverallProgress = () => {
+      const uploadingSum = Object.values(bytesUploading).reduce((a, b) => a + b, 0);
+      const progress = Math.round(((bytesCompleted + uploadingSum) / totalBytes) * 100);
+      setUploadProgress(progress);
+    };
+
+    const uploadChunkWithProgress = (chunkIndex: number, start: number, end: number) => {
+      return new Promise<void>((resolve, reject) => {
+        const chunkBlob = file.slice(start, end);
+        const formData = new FormData();
+        formData.append('upload_id', uploadId);
+        formData.append('chunk_index', String(chunkIndex));
+        formData.append('total_chunks', String(totalChunks));
+        formData.append('filename', file.name);
+        formData.append('file', chunkBlob, file.name);
+        formData.append('image_type', metadata.image_type);
+        formData.append('geospatial_crs', metadata.geospatial_crs);
+        formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
+        formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
+        formData.append('ref_latitude', metadata.ref_latitude);
+        formData.append('ref_longitude', metadata.ref_longitude);
+        formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
+        formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
+        formData.append('sam_points_per_side', metadata.sam_points_per_side);
+        formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
+        formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
+
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) {
+            bytesUploading[chunkIndex] = ev.loaded;
+            updateOverallProgress();
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            // mark chunk as completed
+            const chunkSize = end - start;
+            bytesCompleted += chunkSize;
+            delete bytesUploading[chunkIndex];
+            updateOverallProgress();
+            resolve();
+          } else {
+            reject(new Error(`فشل في رفع الجزء ${chunkIndex + 1}: ${xhr.status} ${xhr.responseText}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network error أثناء رفع الجزء'));
+        xhr.onabort = () => reject(new Error('Upload aborted'));
+        xhr.send(formData);
       });
+    };
 
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`فشل في رفع الجزء ${chunkIndex + 1} من ${totalChunks}: ${resp.status} ${txt}`);
-      }
-
-      setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+    // Create a queue of chunk indices
+    const chunks: Array<{ idx: number; start: number; end: number }> = [];
+    for (let idx = 0; idx < totalChunks; idx += 1) {
+      const start = idx * CHUNK_SIZE_BYTES;
+      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
+      chunks.push({ idx, start, end });
     }
 
+    // run uploads with limited concurrency
+    let active = 0;
+    let pointer = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      const runNext = () => {
+        if (pointer >= chunks.length && active === 0) {
+          resolve();
+          return;
+        }
+
+        while (active < UPLOAD_CONCURRENCY && pointer < chunks.length) {
+          const { idx, start, end } = chunks[pointer++];
+          active += 1;
+          // initialize
+          bytesUploading[idx] = 0;
+          uploadChunkWithProgress(idx, start, end)
+            .then(() => {
+              active -= 1;
+              runNext();
+            })
+            .catch((err) => {
+              reject(err);
+            });
+        }
+      };
+
+      runNext();
+    });
+
+    // finalize
     const completeForm = new FormData();
     completeForm.append('upload_id', uploadId);
     const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
