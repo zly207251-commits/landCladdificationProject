@@ -107,6 +107,9 @@ export default function SettingsPage() {
                     onChange={(e) => update("samMinMaskRegionArea", e.target.value)}
                     className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
+                  <p className="mt-2 text-xs text-slate-500">
+                    زيادة هذه القيمة تجعل SAM يتجاهل الأقنعة الصغيرة جداً، مما يقلل الضوضاء. خفضها يبقي المزيد من المناطق الصغيرة، لكنه قد يزيد من التجزئة.
+                  </p>
                 </label>
               </div>
 
@@ -121,6 +124,9 @@ export default function SettingsPage() {
                     onChange={(e) => update("samPointsPerSide", e.target.value)}
                     className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
+                  <p className="mt-2 text-xs text-slate-500">
+                    زيادة العدد تنتج نقاطاً أكثر وأقنعة أدق، لكنها قد تزيد زمن المعالجة. خفض العدد يجعل الحساب أسرع وأقنعة أقل تفصيلاً.
+                  </p>
                 </label>
 
                 <label className="block">
@@ -134,6 +140,9 @@ export default function SettingsPage() {
                     onChange={(e) => update("samPredIoUThresh", e.target.value)}
                     className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
+                  <p className="mt-2 text-xs text-slate-500">
+                    رفع العتبة يجعل SAM أكثر تشدداً في دمج الأقنعة، فيقلل التداخل والنتائج المتكررة. خفضها يجعل النموذج أقل صرامة ويولد المزيد من الأقنعة المحتملة.
+                  </p>
                 </label>
 
                 <label className="block">
@@ -147,6 +156,9 @@ export default function SettingsPage() {
                     onChange={(e) => update("samStabilityScoreThresh", e.target.value)}
                     className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
+                  <p className="mt-2 text-xs text-slate-500">
+                    رفع هذا العدد يجعل النظام يحتفظ فقط بالأقنعة الأكثر ثباتاً، مما يقلل الضوضاء. خفضه يسمح بمزيد من الأقنعة الأقل ثباتاً وقد يزيد التغطية.
+                  </p>
                 </label>
               </div>
 

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Link from 'next/link';
-import { API_CONFIG } from '@/app/lib/map-config';
+import { API_CONFIG, getApiUrl } from '@/app/lib/map-config';
 
 interface UploadPortalProps {
   onUploadComplete?: (fileInfo: any) => void;
@@ -38,7 +38,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
-  const CHUNK_SIZE_BYTES = 50 * 1024 * 1024; // 50MB per chunk
+  const CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8MB per chunk to avoid proxy/server 413 limits
   const UPLOAD_CONCURRENCY = 3; // concurrent chunk uploads
 
   const buildUploadId = (): string => {
@@ -84,7 +84,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
+        xhr.open('POST', getApiUrl(`${API_CONFIG.endpoints.upload}/chunk`));
 
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable) {
@@ -153,7 +153,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     // finalize
     const completeForm = new FormData();
     completeForm.append('upload_id', uploadId);
-    const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
+    const completeResp = await fetch(getApiUrl(`${API_CONFIG.endpoints.upload}/chunk/complete`), {
       method: 'POST',
       body: completeForm
     });
