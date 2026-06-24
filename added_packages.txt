@@ -1,0 +1,16 @@
+حزم جديدة أُضيفت / مُثبتة
+
+Frontend (واجهة):
+- html2canvas
+  أمر التثبيت: npm install html2canvas --save
+  ملاحظة: تُستخدم لالتقاط جزء من عنصر DOM (الخريطة) كصورة.
+
+Backend (خادم):
+- لا توجد حزم جديدة مطلوبة؛ استخدمت مكتبة Pillow داخل api.py
+  (Pillow موجودة بالفعل في backend/requirements.txt)
+
+طريقة التحقق السريعة:
+- تشغيل الواجهة: cd land-classification-frontend && npm install && npm run dev
+- تشغيل الخادم: cd backend && pip install -r requirements.txt && uvicorn api:app --reload
+
+تم الإنشاء بواسطة نظام التعديل الآلي في المشروع.
