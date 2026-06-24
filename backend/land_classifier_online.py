@@ -21,6 +21,13 @@ class LandColorClassifierOnline:
 
 # اختبار التوكن الجديد
 if __name__ == "__main__":
-    token = "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"
+    import os
+
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise EnvironmentError(
+            "لم يتم العثور على متغير البيئة HF_TOKEN. اعداد HF_TOKEN قبل تشغيل هذا الملف."
+        )
+
     classifier = LandColorClassifierOnline(token)
     classifier.test_token()
