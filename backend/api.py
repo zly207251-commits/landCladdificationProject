@@ -123,11 +123,25 @@ def choose_remote_filename(remote_url: str, response) -> str | None:
     return None
 
 
-def download_remote_file(remote_url: str, dest_path: str, max_bytes: int = 5 * 1024 * 1024 * 1024, chunk_size: int = 8 * 1024 * 1024) -> None:
+def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = None, max_bytes: int = 5 * 1024 * 1024 * 1024, chunk_size: int = 8 * 1024 * 1024) -> None:
     download_url = normalize_remote_url(remote_url)
     with requests.get(download_url, stream=True, allow_redirects=True, timeout=30) as response:
         response.raise_for_status()
+        total_header = response.headers.get("content-length")
+        try:
+            total_expected = int(total_header) if total_header else None
+        except Exception:
+            total_expected = None
+
         total_bytes = 0
+        # notify start
+        if task_id:
+            try:
+                memory.log_message(task_id, "system", "DOWNLOAD_PROGRESS", "start", {"downloaded": 0, "total": total_expected})
+                memory.update_task_status(task_id, "DOWNLOADING")
+            except Exception:
+                pass
+
         with open(dest_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if chunk:
@@ -135,6 +149,23 @@ def download_remote_file(remote_url: str, dest_path: str, max_bytes: int = 5 * 1
                     if total_bytes > max_bytes:
                         raise ValueError("Remote file exceeds maximum allowed size")
                     f.write(chunk)
+                    # send progress update
+                    if task_id:
+                        try:
+                            percent = None
+                            if total_expected:
+                                percent = int((total_bytes / total_expected) * 100)
+                            memory.log_message(task_id, "system", "DOWNLOAD_PROGRESS", "progress", {"downloaded": total_bytes, "total": total_expected, "percent": percent})
+                        except Exception:
+                            pass
+
+        # finished
+        if task_id:
+            try:
+                memory.log_message(task_id, "system", "DOWNLOAD_PROGRESS", "complete", {"downloaded": total_bytes, "total": total_expected, "percent": 100})
+                memory.update_task_status(task_id, "PENDING")
+            except Exception:
+                pass
 
 
 def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
@@ -354,6 +385,8 @@ async def complete_task_chunk_upload(
     }
 
     memory.create_task(task_id, temp_file_path, task_metadata)
+    # mark task as ready to be processed
+    memory.update_task_status(task_id, "PENDING")
     background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
 
     return {
@@ -402,7 +435,8 @@ async def analyze_remote_image(
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
     try:
-        await asyncio.to_thread(download_remote_file, download_url, temp_file_path)
+        # run download in thread and pass task_id to enable progress updates
+        await asyncio.to_thread(download_remote_file, download_url, temp_file_path, task_id)
     except Exception as e:
         if os.path.exists(temp_file_path):
             try:
@@ -437,6 +471,23 @@ async def analyze_remote_image(
 
 
 # --- نهايات الاتصال الخاصة بالوكلاء (Agent Swarm Endpoints) ---
+
+
+@app.get('/tasks/{task_id}/status', summary='Get task status')
+def get_task_status(task_id: str):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    return {"task_id": task_id, "status": task.get('status'), "updated_at": task.get('updated_at')}
+
+
+@app.get('/tasks/{task_id}/messages', summary='Get task messages')
+def get_task_messages(task_id: str):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+    msgs = memory.get_messages(task_id)
+    return {"task_id": task_id, "messages": msgs}
 
 @app.post("/tasks/analyze", summary="1. بدء تحليل الصورة عبر فريق الوكلاء")
 async def analyze_image_with_agents(

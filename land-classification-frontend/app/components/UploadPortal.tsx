@@ -50,6 +50,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     return `upload_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   };
 
+  // poll ref to allow cleanup
+  const pollRef = ({} as { id?: number | null });
+
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
     const totalBytes = file.size;
@@ -184,6 +187,15 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     }
   }, []);
 
+  // cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        if (pollRef.id) clearInterval(pollRef.id);
+      } catch (e) {}
+    };
+  }, []);
+
   // المناطق المتاحة (من الفرونت اند الحالي + PDF)
   const regions = [
     { id: 'riyadh', name: 'منطقة 1 - الرياض', coordinates: [24.7136, 46.6753] },
@@ -294,8 +306,55 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       }
 
       const result = await response.json();
-      setUploadProgress(100);
-      setTimeout(() => setIsUploading(false), 400);
+      const taskId = result?.task_id;
+
+      // start polling messages to show download progress
+      if (taskId) {
+        if (pollRef.id) {
+          clearInterval(pollRef.id);
+        }
+        pollRef.id = window.setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`);
+            if (statusResp.ok) {
+              const statusJson = await statusResp.json();
+              const st = statusJson.status;
+              if (st === 'COMPLETED' || st === 'FAILED') {
+                clearInterval(pollRef.id);
+                pollRef.id = null;
+                setUploadProgress(100);
+                setTimeout(() => setIsUploading(false), 400);
+              }
+            }
+
+            const msgResp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}/messages`);
+            if (msgResp.ok) {
+              const msgsJson = await msgResp.json();
+              const msgs = msgsJson.messages || [];
+              // find last DOWNLOAD_PROGRESS message
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i];
+                if (m.message_type === 'DOWNLOAD_PROGRESS') {
+                  const p = m.payload || {};
+                  if (p.percent != null) {
+                    setUploadProgress(p.percent);
+                  } else if (p.total && p.downloaded) {
+                    setUploadProgress(Math.round((p.downloaded / p.total) * 100));
+                  }
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            // ignore polling errors, keep attempting
+          }
+        }, 1500);
+      }
+
+      if (!taskId) {
+        setUploadProgress(100);
+        setTimeout(() => setIsUploading(false), 400);
+      }
 
       if (onUploadComplete) onUploadComplete(result);
       if (onProcessingStart) onProcessingStart();
