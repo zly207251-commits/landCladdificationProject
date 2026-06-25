@@ -11,6 +11,7 @@ import os
 import json
 import mimetypes
 import importlib.util
+import re
 from pydantic import BaseModel
 from PIL import Image
 import requests
@@ -108,6 +109,21 @@ def normalize_remote_url(remote_url: str) -> str:
     return remote_url.strip()
 
 
+def _extract_google_drive_confirm_token(html: str) -> str | None:
+    match = re.search(r'confirm=([0-9A-Za-z_-]+)&', html)
+    if match:
+        return match.group(1)
+    match = re.search(r'name="confirm" value="([0-9A-Za-z_-]+)"', html)
+    return match.group(1) if match else None
+
+
+def _append_confirm_token(url: str, token: str) -> str:
+    if "confirm=" in url:
+        return re.sub(r'confirm=[^&]+', f'confirm={token}', url)
+    sep = '&' if '?' in url else '?'
+    return f"{url}{sep}confirm={token}"
+
+
 def choose_remote_filename(remote_url: str, response) -> str | None:
     cd = response.headers.get("content-disposition")
     if cd:
@@ -125,8 +141,25 @@ def choose_remote_filename(remote_url: str, response) -> str | None:
 
 def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = None, max_bytes: int = 5 * 1024 * 1024 * 1024, chunk_size: int = 8 * 1024 * 1024) -> None:
     download_url = normalize_remote_url(remote_url)
-    with requests.get(download_url, stream=True, allow_redirects=True, timeout=30) as response:
+    session = requests.Session()
+    response = session.get(download_url, stream=True, allow_redirects=True, timeout=30)
+    try:
         response.raise_for_status()
+
+        if "text/html" in response.headers.get("content-type", ""):
+            html_snippet = response.text[:1000]
+            if "drive.google.com" in download_url and "confirm=" not in download_url:
+                token = _extract_google_drive_confirm_token(html_snippet)
+                if token:
+                    download_url = _append_confirm_token(download_url, token)
+                    response.close()
+                    response = session.get(download_url, stream=True, allow_redirects=True, timeout=30)
+                    response.raise_for_status()
+
+        content_type = response.headers.get("content-type", "")
+        if "text/html" in content_type or "application/json" in content_type:
+            raise ValueError(f"Expected binary image content but received {content_type}")
+
         total_header = response.headers.get("content-length")
         try:
             total_expected = int(total_header) if total_header else None
@@ -134,7 +167,6 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
             total_expected = None
 
         total_bytes = 0
-        # notify start
         if task_id:
             try:
                 memory.log_message(task_id, "system", "DOWNLOAD_PROGRESS", "start", {"downloaded": 0, "total": total_expected})
@@ -149,7 +181,6 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
                     if total_bytes > max_bytes:
                         raise ValueError("Remote file exceeds maximum allowed size")
                     f.write(chunk)
-                    # send progress update
                     if task_id:
                         try:
                             percent = None
@@ -159,13 +190,15 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
                         except Exception:
                             pass
 
-        # finished
         if task_id:
             try:
                 memory.log_message(task_id, "system", "DOWNLOAD_PROGRESS", "complete", {"downloaded": total_bytes, "total": total_expected, "percent": 100})
                 memory.update_task_status(task_id, "PENDING")
             except Exception:
                 pass
+    finally:
+        response.close()
+        session.close()
 
 
 def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
