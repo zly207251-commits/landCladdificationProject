@@ -27,6 +27,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [error, setError] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<string>('riyadh');
   const [imageType, setImageType] = useState<ImageType>('regular');
+  const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
+  const [remoteUrl, setRemoteUrl] = useState('');
   const [pixelScale, setPixelScale] = useState('0.5');
   const [refLatitude, setRefLatitude] = useState('24.7136');
   const [refLongitude, setRefLongitude] = useState('46.6753');
@@ -246,6 +248,64 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     }
   }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
 
+  const uploadRemoteUrl = useCallback(async () => {
+    if (!remoteUrl.trim()) {
+      setError('الرجاء إدخال رابط الملف');
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setError(null);
+    setFileInfo({
+      name: remoteUrl,
+      size: '??',
+      type: 'remote',
+      lastModified: new Date().toLocaleString('ar-SA'),
+      region: selectedRegion,
+      imageType,
+      geoCrs,
+      useGeoMetadata
+    });
+
+    const formData = new FormData();
+    formData.append('remote_url', remoteUrl.trim());
+    formData.append('image_type', imageType);
+    formData.append('geospatial_crs', geoCrs);
+    formData.append('use_geo_metadata', String(useGeoMetadata));
+    formData.append('pixel_scale_meters', pixelScale);
+    formData.append('ref_latitude', refLatitude);
+    formData.append('ref_longitude', refLongitude);
+    formData.append('sam_use_fallback', String(samUseFallback));
+    formData.append('sam_min_mask_region_area', samMinMaskRegionArea);
+    formData.append('sam_points_per_side', samPointsPerSide);
+    formData.append('sam_pred_iou_thresh', samPredIoUThresh);
+    formData.append('sam_stability_score_thresh', samStabilityScoreThresh);
+
+    try {
+      const response = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/remote`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`فشل إرسال الرابط: ${response.status} ${text}`);
+      }
+
+      const result = await response.json();
+      setUploadProgress(100);
+      setTimeout(() => setIsUploading(false), 400);
+
+      if (onUploadComplete) onUploadComplete(result);
+      if (onProcessingStart) onProcessingStart();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف أثناء إرسال الرابط');
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [remoteUrl, selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
+
   const onDropRejected = useCallback((fileRejections: any[]) => {
     try {
       const reasons = fileRejections.map(fr => fr.errors.map((e: any) => e.message).join('; ')).join('; ');
@@ -377,7 +437,116 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         </ul>
       </div>
 
-      {/* منطقة سحب وإفلات */}
+      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <h3 className="font-semibold text-slate-800 mb-3">وضع الرفع</h3>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => setUploadMode('file')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'file' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            رفع ملف
+          </button>
+          <button
+            type="button"
+            onClick={() => setUploadMode('url')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'url' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            رابط خارجي
+          </button>
+        </div>
+        <p className="text-sm text-slate-500 mt-3">
+          اختر رفع الملف مباشرةً إذا كان صغيراً، أو استخدم رابط الملف إذا كان كبيراً أو موجوداً في الخدمة السحابية.
+        </p>
+      </div>
+
+      {uploadMode === 'url' ? (
+        <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
+          <label className="block text-sm text-slate-700 mb-3">
+            <span className="block mb-1">أدخل رابط الملف الخارجي</span>
+            <input
+              type="url"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              disabled={isUploading}
+              placeholder="https://drive.google.com/..."
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={uploadRemoteUrl}
+            disabled={isUploading || !remoteUrl.trim()}
+            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            بدء التحميل من الرابط
+          </button>
+          <p className="text-xs text-slate-500 mt-3">
+            في هذا الوضع، سيقوم السيرفر بسحب الملف مباشرة من المصدر الخارجي بدلاً من رفعه من جهازك.
+          </p>
+        </div>
+      ) : (
+        <div className="mb-6">
+          <label className="block text-gray-700 mb-2 font-medium">
+            اختر صورة جوية
+          </label>
+          <div
+            {...getRootProps()}
+            className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
+              isDragActive
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-300 hover:border-blue-500'
+            } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <input {...getInputProps()} disabled={isUploading} />
+            
+            {isUploading ? (
+              <div className="space-y-4">
+                <div className="w-16 h-16 mx-auto">
+                  <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+                </div>
+                <p className="text-gray-600 font-medium">جاري رفع الملف...</p>
+                
+                {/* شريط التقدم */}
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm text-gray-500">{uploadProgress}%</p>
+              </div>
+            ) : (
+              <>
+                <svg
+                  className="w-16 h-16 mx-auto text-gray-400 mb-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+                <p className="text-lg text-gray-600">
+                  {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
+                </p>
+                <p className="text-sm text-gray-400 mt-2">
+                  يدعم: JPG, PNG, TIFF, GeoTIFF
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  (حتى 1 جيجابايت)
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <div className="mb-6">
         <label className="block text-gray-700 mb-2 font-medium">
           اختر صورة جوية

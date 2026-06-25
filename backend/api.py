@@ -1,7 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 import uvicorn
+import asyncio
 import numpy as np
 import cv2
 import io
@@ -15,6 +16,7 @@ from PIL import Image
 import requests
 import mercantile
 from pyproj import Transformer
+from urllib.parse import urlparse, parse_qs, unquote
 
 rasterio_spec = importlib.util.find_spec('rasterio')
 if rasterio_spec is not None:
@@ -80,6 +82,59 @@ def read_chunk_metadata(upload_id: str) -> dict | None:
         return None
     with open(meta_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def normalize_remote_url(remote_url: str) -> str:
+    parsed = urlparse(remote_url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL must start with http:// or https://")
+
+    if "drive.google.com" in parsed.netloc:
+        query = parse_qs(parsed.query)
+        if "/file/d/" in parsed.path:
+            file_id = parsed.path.split("/file/d/")[1].split("/")[0]
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+        if "id" in query:
+            return f"https://drive.google.com/uc?export=download&id={query['id'][0]}"
+        if "/open" in parsed.path and "id" in query:
+            return f"https://drive.google.com/uc?export=download&id={query['id'][0]}"
+
+    if "dropbox.com" in parsed.netloc:
+        if "dl=0" in parsed.query:
+            return remote_url.replace("dl=0", "dl=1")
+        if parsed.path.endswith("/") and "dl=" not in parsed.query:
+            return f"{remote_url}?dl=1"
+
+    return remote_url.strip()
+
+
+def choose_remote_filename(remote_url: str, response) -> str | None:
+    cd = response.headers.get("content-disposition")
+    if cd:
+        parts = cd.split(";")
+        for part in parts:
+            if "filename=" in part:
+                filename = part.split("=")[1].strip().strip('"')
+                return unquote(filename)
+    parsed = urlparse(remote_url)
+    basename = os.path.basename(parsed.path)
+    if basename:
+        return unquote(basename)
+    return None
+
+
+def download_remote_file(remote_url: str, dest_path: str, max_bytes: int = 5 * 1024 * 1024 * 1024, chunk_size: int = 8 * 1024 * 1024) -> None:
+    download_url = normalize_remote_url(remote_url)
+    with requests.get(download_url, stream=True, allow_redirects=True, timeout=30) as response:
+        response.raise_for_status()
+        total_bytes = 0
+        with open(dest_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise ValueError("Remote file exceeds maximum allowed size")
+                    f.write(chunk)
 
 
 def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
@@ -258,6 +313,17 @@ async def upload_task_chunk(
     }
 
 
+@app.options("/tasks/analyze/chunk")
+async def options_task_chunk(request: Request):
+    # Explicitly respond to preflight to ensure CORS headers reach the browser
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
+
 @app.post("/tasks/analyze/chunk/complete", summary="Finalize chunked task upload and start analysis")
 async def complete_task_chunk_upload(
     background_tasks: BackgroundTasks,
@@ -292,6 +358,79 @@ async def complete_task_chunk_upload(
 
     return {
         "message": "تم تجميع الأجزاء وبدء المهمة بنجاح.",
+        "task_id": task_id,
+        "status": "PENDING"
+    }
+
+
+@app.options("/tasks/analyze/chunk/complete")
+async def options_task_chunk_complete(request: Request):
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
+
+@app.post("/tasks/analyze/remote", summary="Start analysis from a remote image URL")
+async def analyze_remote_image(
+    background_tasks: BackgroundTasks,
+    remote_url: str = Form(..., description='رابط الملف الخارجي'),
+    filename: str | None = Form(None, description='اسم الملف المراد حفظه (اختياري)'),
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
+    pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
+    ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
+):
+    try:
+        download_url = normalize_remote_url(remote_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    guessed_name = filename or os.path.basename(urlparse(download_url).path) or f"remote_image_{task_id}.bin"
+    file_extension = os.path.splitext(guessed_name)[1] or ".bin"
+    temp_file_name = f"{task_id}{file_extension}"
+    temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
+
+    try:
+        await asyncio.to_thread(download_remote_file, download_url, temp_file_path)
+    except Exception as e:
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=400, detail=f"فشل تنزيل الملف من الرابط: {str(e)}")
+
+    task_metadata = {
+        "remote_url": remote_url,
+        "image_type": image_type,
+        "geospatial_crs": geospatial_crs,
+        "use_geo_metadata": use_geo_metadata,
+        "pixel_scale_meters": pixel_scale_meters,
+        "ref_latitude": ref_latitude,
+        "ref_longitude": ref_longitude,
+        "sam_use_fallback": sam_use_fallback,
+        "sam_min_mask_region_area": sam_min_mask_region_area,
+        "sam_points_per_side": sam_points_per_side,
+        "sam_pred_iou_thresh": sam_pred_iou_thresh,
+        "sam_stability_score_thresh": sam_stability_score_thresh,
+    }
+
+    memory.create_task(task_id, temp_file_path, task_metadata)
+    background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+
+    return {
+        "message": "تم بدء استيراد الملف من الرابط وبدء المهمة.",
         "task_id": task_id,
         "status": "PENDING"
     }
