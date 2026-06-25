@@ -316,14 +316,19 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         pollRef.id = window.setInterval(async () => {
           try {
             const statusResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`);
+            let statusJson = null;
             if (statusResp.ok) {
-              const statusJson = await statusResp.json();
+              statusJson = await statusResp.json();
               const st = statusJson.status;
               if (st === 'COMPLETED' || st === 'FAILED') {
                 clearInterval(pollRef.id);
                 pollRef.id = null;
-                setUploadProgress(100);
                 setTimeout(() => setIsUploading(false), 400);
+                if (st === 'FAILED') {
+                  setUploadProgress(0);
+                } else {
+                  setUploadProgress(100);
+                }
               }
             }
 
@@ -331,18 +336,28 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
             if (msgResp.ok) {
               const msgsJson = await msgResp.json();
               const msgs = msgsJson.messages || [];
-              // find last DOWNLOAD_PROGRESS message
+              let lastDownloadMsg = null;
+              let lastErrorMsg = null;
               for (let i = msgs.length - 1; i >= 0; i--) {
                 const m = msgs[i];
-                if (m.message_type === 'DOWNLOAD_PROGRESS') {
-                  const p = m.payload || {};
-                  if (p.percent != null) {
-                    setUploadProgress(p.percent);
-                  } else if (p.total && p.downloaded) {
-                    setUploadProgress(Math.round((p.downloaded / p.total) * 100));
-                  }
-                  break;
+                if (!lastErrorMsg && (m.message_type === 'ERROR' || m.message_type === 'FAILED')) {
+                  lastErrorMsg = m.content;
                 }
+                if (!lastDownloadMsg && m.message_type === 'DOWNLOAD_PROGRESS') {
+                  lastDownloadMsg = m;
+                }
+                if (lastErrorMsg && lastDownloadMsg) break;
+              }
+              if (lastDownloadMsg) {
+                const p = lastDownloadMsg.payload || {};
+                if (p.percent != null) {
+                  setUploadProgress(p.percent);
+                } else if (p.total && p.downloaded) {
+                  setUploadProgress(Math.round((p.downloaded / p.total) * 100));
+                }
+              }
+              if (statusJson?.status === 'FAILED' && lastErrorMsg) {
+                setError(`فشلت مهمة التحميل: ${lastErrorMsg}`);
               }
             }
           } catch (e) {

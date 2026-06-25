@@ -17,7 +17,7 @@ from PIL import Image
 import requests
 import mercantile
 from pyproj import Transformer
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 rasterio_spec = importlib.util.find_spec('rasterio')
 if rasterio_spec is not None:
@@ -109,12 +109,26 @@ def normalize_remote_url(remote_url: str) -> str:
     return remote_url.strip()
 
 
-def _extract_google_drive_confirm_token(html: str) -> str | None:
-    match = re.search(r'confirm=([0-9A-Za-z_-]+)&', html)
+def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
+    # Google Drive may render a link on the warning page with the download URL.
+    match = re.search(r'href="([^"]*uc\?export=download[^"]*)"', html)
     if match:
-        return match.group(1)
+        return urljoin(base_url, match.group(1))
+
+    # fallback: if the page includes a confirm input, add it to the URL.
     match = re.search(r'name="confirm" value="([0-9A-Za-z_-]+)"', html)
-    return match.group(1) if match else None
+    if match:
+        return _append_confirm_token(base_url, match.group(1))
+
+    match = re.search(r'name="download_warning" value="([0-9A-Za-z_-]+)"', html)
+    if match:
+        return _append_confirm_token(base_url, match.group(1))
+
+    match = re.search(r'confirm=([0-9A-Za-z_-]+)', html)
+    if match:
+        return _append_confirm_token(base_url, match.group(1))
+
+    return None
 
 
 def _append_confirm_token(url: str, token: str) -> str:
@@ -147,14 +161,14 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
         response.raise_for_status()
 
         if "text/html" in response.headers.get("content-type", ""):
-            html_snippet = response.text[:1000]
-            if "drive.google.com" in download_url and "confirm=" not in download_url:
-                token = _extract_google_drive_confirm_token(html_snippet)
-                if token:
-                    download_url = _append_confirm_token(download_url, token)
+            html_text = response.text
+            if "drive.google.com" in download_url:
+                new_download_url = _extract_google_drive_download_url(html_text, download_url)
+                if new_download_url and new_download_url != download_url:
                     response.close()
-                    response = session.get(download_url, stream=True, allow_redirects=True, timeout=30)
+                    response = session.get(new_download_url, stream=True, allow_redirects=True, timeout=30)
                     response.raise_for_status()
+                    download_url = new_download_url
 
         content_type = response.headers.get("content-type", "")
         if "text/html" in content_type or "application/json" in content_type:
