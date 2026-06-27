@@ -40,8 +40,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
-  const CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8MB per chunk to avoid proxy/server 413 limits
-  const UPLOAD_CONCURRENCY = 3; // concurrent chunk uploads
+  const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16MB per chunk to reduce overhead for large uploads
+  const UPLOAD_CONCURRENCY = 5; // more concurrent uploads for faster throughput
 
   const buildUploadId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

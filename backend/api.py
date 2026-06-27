@@ -34,6 +34,8 @@ from agent_system.memory import SharedMemory
 from agent_system.messaging import MessageBus
 from agent_system.graph import create_swarm_graph
 from land_classifier import LandSegmenterSAM
+import threading
+import time
 
 app = FastAPI(
     title="نظام فريق وكلاء التحليل الجغرافي (Geo-AI Swarm)",
@@ -41,6 +43,8 @@ app = FastAPI(
     version="2.0"
 )
 
+# Configure CORS with wildcard origin for GitHub.dev/potential dynamic hosts.
+# If your frontend sends credentials, change this to a fixed origin and allow_credentials=True.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,8 +59,48 @@ DB_PATH = "shared_memory.db"
 memory = SharedMemory(db_path=DB_PATH)
 message_bus = MessageBus(memory)
 
-# تهيئة وكيل SAM الموروث (سيتم استدعاؤه بشكل منفصل)
-segmenter = LandSegmenterSAM()
+# Segmenter will be loaded in background on startup to avoid blocking import
+segmenter = None
+_segmenter_lock = threading.Lock()
+_segmenter_ready = threading.Event()
+
+def _load_segmenter_background():
+    global segmenter
+    try:
+        seg = LandSegmenterSAM()
+        with _segmenter_lock:
+            segmenter = seg
+        _segmenter_ready.set()
+        print("✔️ Segmenter loaded in background and ready")
+    except Exception as e:
+        print(f"⚠️ Failed loading segmenter in background: {e}")
+
+
+@app.on_event("startup")
+def _start_segmenter_loader():
+    t = threading.Thread(target=_load_segmenter_background, daemon=True)
+    t.start()
+
+def ensure_segmenter(timeout: float = 60.0):
+    """Ensure the global `segmenter` is loaded. Wait up to `timeout` seconds.
+    If not ready after timeout, attempt a synchronous load as fallback.
+    """
+    global segmenter
+    if _segmenter_ready.is_set():
+        return segmenter
+    # wait briefly for background loader
+    waited = _segmenter_ready.wait(timeout=timeout)
+    if waited and segmenter is not None:
+        return segmenter
+    # fallback: attempt synchronous load (may block)
+    try:
+        with _segmenter_lock:
+            if segmenter is None:
+                segmenter = LandSegmenterSAM()
+                _segmenter_ready.set()
+    except Exception as e:
+        print(f"⚠️ Failed synchronous segmenter load fallback: {e}")
+    return segmenter
 
 # إنشاء مجلد مؤقت لحفظ الصور المرفوعة للتحليل
 UPLOAD_DIR = "temp_uploads"
@@ -310,8 +354,19 @@ def get_geotiff_metadata(path: str):
 def run_agent_swarm_background(task_id: str, image_path: str):
     """دالة تُنفذ في الخلفية لتشغيل تدفق الوكلاء عبر LangGraph دون إيقاف الواجهة."""
     try:
+        # تأكد من تحميل segmenter (ينتظر لفترة ثم يجرب synchronous كنسخة احتياطية)
+        seg = ensure_segmenter()
+        if seg is None:
+            message_bus.publish(
+                task_id=task_id,
+                sender="system",
+                message_type="ERROR",
+                content=f"لم يتوفر نموذج SAM لتحليل المهمة ({task_id})."
+            )
+            memory.update_task_status(task_id, "FAILED")
+            return
         # بناء وتشغيل الرسم البياني للوكلاء
-        compiled_graph = create_swarm_graph(memory, message_bus, segmenter)
+        compiled_graph = create_swarm_graph(memory, message_bus, seg)
         initial_state = {
             "task_id": task_id,
             "image_path": image_path,
@@ -1059,12 +1114,28 @@ async def segment_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image")
 
     # استخراج القطع من SAM
-    polygons = segmenter.segment_image(img)
+    seg = ensure_segmenter()
+    if seg is None:
+        raise HTTPException(status_code=503, detail="SAM model not available")
 
-    # رسم الحدود على الصورة
-    for poly in polygons:
-        pts = poly.astype(np.int32)
-        cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+    segments = seg.segment_image(img)
+
+    # رسم الحدود على الصورة (نتيجة segment_image قد تكون قائمة قواميس تحتوي 'polygons')
+    for seg_item in segments:
+        polys = None
+        if isinstance(seg_item, dict):
+            polys = seg_item.get('polygons', [])
+        elif isinstance(seg_item, (list, tuple)):
+            polys = seg_item
+        else:
+            continue
+
+        for poly in polys:
+            try:
+                pts = np.array(poly, dtype=np.int32)
+                cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+            except Exception:
+                continue
 
     # إخراج الصورة
     _, buffer = cv2.imencode(".png", img)
