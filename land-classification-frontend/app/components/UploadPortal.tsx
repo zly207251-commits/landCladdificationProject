@@ -539,7 +539,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       {uploadMode === 'url' ? (
         <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
           <label className="block text-sm text-slate-700 mb-3">
-            <span className="block mb-1">أدخل رابط الملف الخارجي</span>
+            <span className="block mb-1">أدخل رابط Google Drive أو رابط خارجي</span>
             <input
               type="url"
               value={remoteUrl}
@@ -555,10 +555,10 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
             disabled={isUploading || !remoteUrl.trim()}
             className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            بدء التحميل من الرابط
+            استيراد من Google Drive / رابط خارجي
           </button>
           <p className="text-xs text-slate-500 mt-3">
-            في هذا الوضع، سيقوم السيرفر بسحب الملف مباشرة من المصدر الخارجي بدلاً من رفعه من جهازك.
+            في هذا الوضع، سيقوم السيرفر بسحب الملف من Google Drive أو المصدر الخارجي بدون رفعه من جهازك.
           </p>
         </div>
       ) : (
@@ -621,64 +621,6 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
           </div>
         </div>
       )}
-      <div className="mb-6">
-        <label className="block text-gray-700 mb-2 font-medium">
-          اختر صورة جوية
-        </label>
-        <div
-          {...getRootProps()}
-          className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
-            isDragActive
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-blue-500'
-          } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <input {...getInputProps()} disabled={isUploading} />
-          
-          {isUploading ? (
-            <div className="space-y-4">
-              <div className="w-16 h-16 mx-auto">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
-              </div>
-              <p className="text-gray-600 font-medium">جاري رفع الملف...</p>
-              
-              {/* شريط التقدم */}
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
-              </div>
-              <p className="text-sm text-gray-500">{uploadProgress}%</p>
-            </div>
-          ) : (
-            <>
-              <svg
-                className="w-16 h-16 mx-auto text-gray-400 mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
-              <p className="text-lg text-gray-600">
-                {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                يدعم: JPG, PNG, TIFF, GeoTIFF
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                (حتى 1 جيجابايت)
-              </p>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* اختيار المنطقة */}
       <div className="mb-6">

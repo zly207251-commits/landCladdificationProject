@@ -508,6 +508,17 @@ async def options_task_chunk_complete(request: Request):
     })
 
 
+@app.options("/tasks/analyze/remote")
+async def options_task_remote(request: Request):
+    # Explicitly respond to preflight to ensure CORS headers reach the browser
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
+
 @app.post("/tasks/analyze/remote", summary="Start analysis from a remote image URL")
 async def analyze_remote_image(
     background_tasks: BackgroundTasks,
@@ -573,14 +584,6 @@ async def analyze_remote_image(
 
 
 # --- نهايات الاتصال الخاصة بالوكلاء (Agent Swarm Endpoints) ---
-
-
-@app.get('/tasks/{task_id}/status', summary='Get task status')
-def get_task_status(task_id: str):
-    task = memory.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail='Task not found')
-    return {"task_id": task_id, "status": task.get('status'), "updated_at": task.get('updated_at')}
 
 
 @app.get('/tasks/{task_id}/messages', summary='Get task messages')
@@ -680,18 +683,19 @@ async def analyze_image_with_agents(
         "status": "PENDING"
     }
 
-@app.get("/tasks/{task_id}/status", summary="2. الاستعلام عن حالة المهمة")
+@app.get("/tasks/{task_id}/status", summary="Get task status - الاستعلام عن حالة المهمة")
 def get_task_status(task_id: str):
     """
+    Get the status of a task to check if it is pending, in progress, completed, or failed.
     الاستعلام عن حالة المهمة لمعرفة ما إذا كانت معلقة، قيد التنفيذ، مكتملة، أو فشلت.
     """
     task = memory.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+        raise HTTPException(status_code=404, detail="Task not found - المهمة المطلوبة غير موجودة.")
     return {
         "task_id": task_id,
-        "status": task["status"],
-        "updated_at": task["updated_at"]
+        "status": task.get("status"),
+        "updated_at": task.get("updated_at")
     }
 
 @app.get("/tasks/{task_id}/report", summary="3. جلب التقرير المساحي النهائي والطبقات")
