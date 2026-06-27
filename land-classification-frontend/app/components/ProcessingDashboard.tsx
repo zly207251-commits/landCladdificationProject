@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { API_CONFIG, PROCESSING_STAGES } from '@/app/lib/map-config';
 
 interface ProcessingDashboardProps {
@@ -10,6 +11,7 @@ interface ProcessingDashboardProps {
 }
 
 export default function ProcessingDashboard({ jobId, onComplete, onError }: ProcessingDashboardProps) {
+  const router = useRouter();
   const [currentStage, setCurrentStage] = useState<string>('upload');
   const [stages, setStages] = useState<any[]>([]);
   const [processingTime, setProcessingTime] = useState<number>(0);
@@ -50,7 +52,7 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
     const check = async () => {
       try {
         const endpoint = `${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`;
-        const resp = await fetch(endpoint);
+        const resp = await fetch(endpoint, { cache: 'no-store' });
         if (!resp.ok) throw new Error(`Status ${resp.status}`);
         const data = await resp.json();
         setBackendStatus(data.status);
@@ -137,7 +139,7 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           لم يتم رفع أي صورة بعد. ارفع صورة لبدء مهمة جديدة ومتابعة حالة المعالجة.
         </p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => router.refresh()}
           className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
         >
           العودة إلى الرفع
@@ -304,7 +306,7 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
         )}
         
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => router.refresh()}
           className="py-3 px-6 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-colors"
         >
           🔄 إعادة تحميل

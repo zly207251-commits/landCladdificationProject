@@ -41,7 +41,8 @@ def run_verification():
     
     # 4. بناء وتجميع الرسم البياني للوكلاء باستخدام LangGraph
     print("🏗️ بناء الرسم البياني (StateGraph) لتنسيق فريق الوكلاء...")
-    compiled_graph = create_swarm_graph(memory, message_bus)
+    segmenter = LandSegmenterSAM(fail_fast=False)
+    compiled_graph = create_swarm_graph(memory, message_bus, segmenter)
     
     # 5. تشغيل الرسم البياني عبر إدخال الحالة الابتدائية
     print("\n🏁 بدء تشغيل تدفق فريق الوكلاء...")

@@ -49,3 +49,6 @@ temp_uploads/
 *.log
 agent_system/*.log
 .gemini/
+
+# 9. ملف تعريف التوكن المحلي
+.env

@@ -1,0 +1,3 @@
+Patched `GlobeViewer.tsx`: replaced open-link anchor with download attribute so the 'فتح TIFF' link forces browser download (changed text to 'تحميل TIFF').
+
+If server still returns inline Content-Disposition or cross-origin prevents download attribute, consider adding server header `Content-Disposition: attachment; filename="export.tiff"` in backend `crop` and `crop/from_tiles` responses.

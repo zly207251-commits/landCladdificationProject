@@ -23,7 +23,7 @@ const IMAGERY_PROVIDERS = [
   {
     id: 'google',
     label: 'Google Satellite',
-    description: 'Google Satellite عبر رابط غير رسمي للـ tiles',
+    description: 'Google Satellite عبر رابط   للـ tiles',
   },
   {
     id: 'gibs_truecolor',
@@ -79,6 +79,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [date, setDate] = useState(formatDate(new Date()));
   const [selectedProvider, setSelectedProvider] = useState<string>('google');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
+  const [tileZoom, setTileZoom] = useState<number>(17);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
 
   const createImageryProvider = (providerId: string) => {
@@ -170,7 +171,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                 const dataSource = await Cesium.GeoJsonDataSource.load(taskReport.geojson, {
                   stroke: Cesium.Color.YELLOW,
                   fill: Cesium.Color.YELLOW.withAlpha(0.2),
-                  strokeWidth: 2,
+                  strokeWidth: 1,
                 });
                 viewerRef.current.dataSources.add(dataSource);
                 const center = taskReport.map_center;
@@ -212,43 +213,51 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [taskId]);
 
-  // أحداث التحديد في DOM overlay (اختيار مستطيل)
+  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium || !container) return;
+    const canvas = viewerRef.current.scene.canvas;
+    if (!canvas) return;
 
-    const onMouseDown = (ev: MouseEvent) => {
-      if (!selecting) return;
+    const getPointer = (position: any) => {
       const rect = container.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      setStartPoint({ x, y });
-      // إظهار عنصر التحديد
+      return {
+        x: position.x - rect.left,
+        y: position.y - rect.top
+      };
+    };
+
+    const handler = new Cesium.ScreenSpaceEventHandler(canvas);
+
+    handler.setInputAction((movement: any) => {
+      if (!selecting) return;
+      const pos = getPointer(movement.position);
+      setStartPoint(pos);
       if (selectionRef.current) {
-        selectionRef.current.style.left = `${x}px`;
-        selectionRef.current.style.top = `${y}px`;
+        selectionRef.current.style.left = `${pos.x}px`;
+        selectionRef.current.style.top = `${pos.y}px`;
         selectionRef.current.style.width = `0px`;
         selectionRef.current.style.height = `0px`;
         selectionRef.current.style.display = 'block';
       }
-    };
+    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
 
-    const onMouseMove = (ev: MouseEvent) => {
+    handler.setInputAction((movement: any) => {
       if (!selecting || !startPoint || !selectionRef.current) return;
-      const rect = container.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      const left = Math.min(startPoint.x, x);
-      const top = Math.min(startPoint.y, y);
-      const width = Math.abs(x - startPoint.x);
-      const height = Math.abs(y - startPoint.y);
+      const pos = getPointer(movement.endPosition || movement.position);
+      const left = Math.min(startPoint.x, pos.x);
+      const top = Math.min(startPoint.y, pos.y);
+      const width = Math.abs(startPoint.x - pos.x);
+      const height = Math.abs(startPoint.y - pos.y);
       selectionRef.current.style.left = `${left}px`;
       selectionRef.current.style.top = `${top}px`;
       selectionRef.current.style.width = `${width}px`;
       selectionRef.current.style.height = `${height}px`;
-    };
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    const onMouseUp = (ev: MouseEvent) => {
+    handler.setInputAction((movement: any) => {
       if (!selecting || !startPoint || !selectionRef.current) return;
       const rect = selectionRef.current.getBoundingClientRect();
       const parentRect = container.getBoundingClientRect();
@@ -256,18 +265,12 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       setSelectionRect(relativeRect);
       setSelecting(false);
       setStartPoint(null);
-    };
-
-    container.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     return () => {
-      container.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      handler.destroy();
     };
-  }, [selecting, startPoint]);
+  }, [selecting, startPoint, isLoaded]);
 
   // تعطيل تحكم الكاميرا في Cesium أثناء التحديد لمنع السحب
   useEffect(() => {
@@ -302,45 +305,85 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     }
   };
 
+  const getLonLatFromScreen = (x: number, y: number) => {
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) return null;
+    const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
+      new Cesium.Cartesian2(x, y),
+      viewerRef.current.scene.globe.ellipsoid
+    );
+    if (!cartesian) return null;
+    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+    return {
+      lon: Cesium.Math.toDegrees(cartographic.longitude),
+      lat: Cesium.Math.toDegrees(cartographic.latitude)
+    };
+  };
+
   const saveSelectionAsTiff = async () => {
-    if (!selectionRect || !viewerRef.current) return alert('لم تحدد منطقة للحفظ');
     try {
-      const canvas: HTMLCanvasElement = viewerRef.current.scene.canvas as HTMLCanvasElement;
-      const dataUrl = canvas.toDataURL('image/png');
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise((res) => { img.onload = res; });
-
-      const tmp = document.createElement('canvas');
-      tmp.width = Math.max(1, Math.round(selectionRect.width));
-      tmp.height = Math.max(1, Math.round(selectionRect.height));
-      const ctx = tmp.getContext('2d');
-      if (!ctx) throw new Error('تعذر الحصول على سياق الرسم');
-
-      ctx.drawImage(img, selectionRect.x, selectionRect.y, selectionRect.width, selectionRect.height, 0, 0, selectionRect.width, selectionRect.height);
-
-      const blob: Blob | null = await new Promise((resolve) => tmp.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('تعذر إنشاء Blob');
-
-      const form = new FormData();
-      form.append('file', blob, 'globe_capture.png');
-      const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const resp = await fetch(base + '/save_map_tiff', { method: 'POST', body: form });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(txt || 'فشل حفظ TIFF');
+      if (!selectionRect) {
+        throw new Error('يرجى تحديد منطقة للقص أولاً.');
       }
-      const data = await resp.json();
-      const download = data?.download_url;
-      if (download) {
-        setExportLink(base + download);
-        window.open(base + download, '_blank');
-      } else {
-        alert('تم الحفظ بنجاح');
+
+      const topLeft = getLonLatFromScreen(selectionRect.x, selectionRect.y);
+      const bottomRight = getLonLatFromScreen(selectionRect.x + selectionRect.width, selectionRect.y + selectionRect.height);
+      if (!topLeft || !bottomRight) {
+        throw new Error('تعذر تحويل الحقول المحددة إلى إحداثيات جغرافية. حاول اختيار منطقة أقرب إلى سطح الكرة الأرضية.');
       }
-    } catch (e:any) {
+
+      const minLon = Math.min(topLeft.lon, bottomRight.lon);
+      const maxLon = Math.max(topLeft.lon, bottomRight.lon);
+      const minLat = Math.min(topLeft.lat, bottomRight.lat);
+      const maxLat = Math.max(topLeft.lat, bottomRight.lat);
+      const base = API_CONFIG.baseURL || 'http://localhost:8000';
+
+      if (taskId) {
+        const downloadUrl = `${base}/tasks/${taskId}/crop?min_lon=${encodeURIComponent(minLon)}&min_lat=${encodeURIComponent(minLat)}&max_lon=${encodeURIComponent(maxLon)}&max_lat=${encodeURIComponent(maxLat)}`;
+        setExportLink(downloadUrl);
+        window.open(downloadUrl, '_blank');
+        return;
+      }
+
+      // بدون taskId: استخدم تركيب البلاطات من مصدر الصور الحالي
+      const getTileTemplate = () => {
+        switch (selectedProvider) {
+          case 'osm':
+            return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+          case 'esri':
+            return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+          case 'google':
+            return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
+          case 'gibs_truecolor':
+            return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
+          case 'gibs_viirs':
+            return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
+          default:
+            return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        }
+      };
+
+      const tile_template = getTileTemplate();
+
+      if (selectedProvider === 'google') {
+        const ok = window.confirm('مصدر الصور Google قد يكون محدود الترخيص — هل تضمن أنك مخوّل لاستخدامه لهذا الغرض؟ اضغط موافق للمتابعة.');
+        if (!ok) return;
+      }
+
+      const params = new URLSearchParams();
+      params.set('tile_template', tile_template);
+      params.set('zoom', String(tileZoom));
+      params.set('min_lon', String(minLon));
+      params.set('min_lat', String(minLat));
+      params.set('max_lon', String(maxLon));
+      params.set('max_lat', String(maxLat));
+
+      const downloadUrl = `${base}/crop/from_tiles?${params.toString()}`;
+      setExportLink(downloadUrl);
+      window.open(downloadUrl, '_blank');
+    } catch (e: any) {
       console.error(e);
-      alert('خطأ أثناء حفظ TIFF: ' + (e?.message || e));
+      alert('خطأ أثناء طلب القص الجغرافي: ' + (e?.message || e));
     }
   };
 
@@ -372,6 +415,62 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         <div className="bg-slate-950 text-white rounded-3xl overflow-hidden shadow-lg h-[620px] relative">
           <div className="h-full" ref={containerRef} style={{ minHeight: 620 }} />
 
+            {/* Overlay لالتقاط أحداث الماوس أثناء وضع التحديد (موثوق عبر جميع المتصفحات) */}
+            <div
+              onMouseDown={(ev) => {
+                console.debug('overlay mousedown', { selecting });
+                if (!selecting) return;
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                setStartPoint({ x, y });
+                if (selectionRef.current) {
+                  selectionRef.current.style.left = `${x}px`;
+                  selectionRef.current.style.top = `${y}px`;
+                  selectionRef.current.style.width = `0px`;
+                  selectionRef.current.style.height = `0px`;
+                  selectionRef.current.style.display = 'block';
+                  selectionRef.current.style.pointerEvents = 'none';
+                }
+              }}
+              onMouseMove={(ev) => {
+                if (!selecting || !startPoint || !selectionRef.current) return;
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                const left = Math.min(startPoint.x, x);
+                const top = Math.min(startPoint.y, y);
+                const width = Math.abs(x - startPoint.x);
+                const height = Math.abs(y - startPoint.y);
+                selectionRef.current.style.left = `${left}px`;
+                selectionRef.current.style.top = `${top}px`;
+                selectionRef.current.style.width = `${width}px`;
+                selectionRef.current.style.height = `${height}px`;
+              }}
+              onMouseUp={(ev) => {
+                if (!selecting || !startPoint || !selectionRef.current) return;
+                const rect = selectionRef.current.getBoundingClientRect();
+                const parentRect = containerRef.current?.getBoundingClientRect();
+                if (!parentRect) return;
+                const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
+                setSelectionRect(relativeRect);
+                setSelecting(false);
+                setStartPoint(null);
+              }}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 45,
+                background: 'transparent',
+                pointerEvents: selecting ? 'auto' : 'none'
+              }}
+            />
+
           {/* عناصر التحكم العائمة */}
           <div className="absolute top-4 left-4 z-[60] flex gap-2">
             <button onClick={toggleFullscreen} className="rounded-md bg-white/20 px-3 py-2 text-xs">ملء الشاشة</button>
@@ -382,7 +481,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               <button onClick={saveSelectionAsTiff} className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white">حفظ كـ TIFF</button>
             )}
             {exportLink && (
-              <a href={exportLink} target="_blank" rel="noreferrer" className="rounded-md bg-white/20 px-3 py-2 text-xs">فتح TIFF</a>
+              <a href={exportLink} download className="rounded-md bg-white/20 px-3 py-2 text-xs">تحميل TIFF</a>
             )}
           </div>
 
@@ -409,6 +508,11 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               <p className="mt-2 text-xs text-slate-500">
                 {IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.description}
               </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Zoom للبلاطات (Tile zoom)</label>
+              <input type="number" min={0} max={22} value={tileZoom} onChange={(e)=>setTileZoom(Number(e.target.value))} className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none" />
+              <p className="mt-2 text-xs text-slate-500">اختر مستوى التكبير المستخدم لتحميل البلاطات (كلما زاد الرقم زادت الدقة).</p>
             </div>
             {selectedProvider.startsWith('gibs') && (
               <div>

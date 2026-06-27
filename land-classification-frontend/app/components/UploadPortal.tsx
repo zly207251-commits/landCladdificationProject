@@ -1,12 +1,21 @@
 "use client";
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
+import Link from 'next/link';
 import { API_CONFIG } from '@/app/lib/map-config';
 
 interface UploadPortalProps {
   onUploadComplete?: (fileInfo: any) => void;
   onProcessingStart?: () => void;
+}
+
+interface SamSettings {
+  samUseFallback: boolean;
+  samMinMaskRegionArea: string;
+  samPointsPerSide: string;
+  samPredIoUThresh: string;
+  samStabilityScoreThresh: string;
 }
 
 type ImageType = 'regular' | 'geospatial';
@@ -18,11 +27,174 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [error, setError] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<string>('riyadh');
   const [imageType, setImageType] = useState<ImageType>('regular');
+  const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
+  const [remoteUrl, setRemoteUrl] = useState('');
   const [pixelScale, setPixelScale] = useState('0.5');
   const [refLatitude, setRefLatitude] = useState('24.7136');
   const [refLongitude, setRefLongitude] = useState('46.6753');
   const [geoCrs, setGeoCrs] = useState('EPSG:4326');
   const [useGeoMetadata, setUseGeoMetadata] = useState(true);
+  const [samUseFallback, setSamUseFallback] = useState(false);
+  const [samMinMaskRegionArea, setSamMinMaskRegionArea] = useState('500');
+  const [samPointsPerSide, setSamPointsPerSide] = useState('16');
+  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
+  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
+
+  const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16MB per chunk to reduce overhead for large uploads
+  const UPLOAD_CONCURRENCY = 5; // more concurrent uploads for faster throughput
+
+  const buildUploadId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `upload_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  };
+
+  // poll ref to allow cleanup
+  const pollRef = ({} as { id?: number | null });
+
+  const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+    const totalBytes = file.size;
+
+    // track progress per chunk (bytes uploaded so far for each active chunk)
+    const bytesUploading: Record<number, number> = {};
+    let bytesCompleted = 0;
+
+    const updateOverallProgress = () => {
+      const uploadingSum = Object.values(bytesUploading).reduce((a, b) => a + b, 0);
+      const progress = Math.round(((bytesCompleted + uploadingSum) / totalBytes) * 100);
+      setUploadProgress(progress);
+    };
+
+    const uploadChunkWithProgress = (chunkIndex: number, start: number, end: number) => {
+      return new Promise<void>((resolve, reject) => {
+        const chunkBlob = file.slice(start, end);
+        const formData = new FormData();
+        formData.append('upload_id', uploadId);
+        formData.append('chunk_index', String(chunkIndex));
+        formData.append('total_chunks', String(totalChunks));
+        formData.append('filename', file.name);
+        formData.append('file', chunkBlob, file.name);
+        formData.append('image_type', metadata.image_type);
+        formData.append('geospatial_crs', metadata.geospatial_crs);
+        formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
+        formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
+        formData.append('ref_latitude', metadata.ref_latitude);
+        formData.append('ref_longitude', metadata.ref_longitude);
+        formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
+        formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
+        formData.append('sam_points_per_side', metadata.sam_points_per_side);
+        formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
+        formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
+
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) {
+            bytesUploading[chunkIndex] = ev.loaded;
+            updateOverallProgress();
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            // mark chunk as completed
+            const chunkSize = end - start;
+            bytesCompleted += chunkSize;
+            delete bytesUploading[chunkIndex];
+            updateOverallProgress();
+            resolve();
+          } else {
+            reject(new Error(`فشل في رفع الجزء ${chunkIndex + 1}: ${xhr.status} ${xhr.responseText}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network error أثناء رفع الجزء'));
+        xhr.onabort = () => reject(new Error('Upload aborted'));
+        xhr.send(formData);
+      });
+    };
+
+    // Create a queue of chunk indices
+    const chunks: Array<{ idx: number; start: number; end: number }> = [];
+    for (let idx = 0; idx < totalChunks; idx += 1) {
+      const start = idx * CHUNK_SIZE_BYTES;
+      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
+      chunks.push({ idx, start, end });
+    }
+
+    // run uploads with limited concurrency
+    let active = 0;
+    let pointer = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      const runNext = () => {
+        if (pointer >= chunks.length && active === 0) {
+          resolve();
+          return;
+        }
+
+        while (active < UPLOAD_CONCURRENCY && pointer < chunks.length) {
+          const { idx, start, end } = chunks[pointer++];
+          active += 1;
+          // initialize
+          bytesUploading[idx] = 0;
+          uploadChunkWithProgress(idx, start, end)
+            .then(() => {
+              active -= 1;
+              runNext();
+            })
+            .catch((err) => {
+              reject(err);
+            });
+        }
+      };
+
+      runNext();
+    });
+
+    // finalize
+    const completeForm = new FormData();
+    completeForm.append('upload_id', uploadId);
+    const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
+      method: 'POST',
+      body: completeForm
+    });
+
+    if (!completeResp.ok) {
+      const txt = await completeResp.text();
+      throw new Error(`فشل إنهاء التحميل: ${completeResp.status} ${txt}`);
+    }
+
+    return completeResp.json();
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem('land_agent_sam_settings');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as SamSettings;
+      setSamUseFallback(parsed.samUseFallback ?? false);
+      setSamMinMaskRegionArea(parsed.samMinMaskRegionArea ?? '500');
+      setSamPointsPerSide(parsed.samPointsPerSide ?? '16');
+      setSamPredIoUThresh(parsed.samPredIoUThresh ?? '0.45');
+      setSamStabilityScoreThresh(parsed.samStabilityScoreThresh ?? '0.30');
+    } catch {
+      return;
+    }
+  }, []);
+
+  // cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        if (pollRef.id) clearInterval(pollRef.id);
+      } catch (e) {}
+    };
+  }, []);
 
   // المناطق المتاحة (من الفرونت اند الحالي + PDF)
   const regions = [
@@ -45,58 +217,183 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     setUploadProgress(0);
     setError(null);
 
+    const fileInfo = {
+      name: file.name,
+      size: (file.size / (1024 * 1024)).toFixed(2),
+      type: file.type,
+      lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
+      region: selectedRegion,
+      imageType,
+      geoCrs,
+      useGeoMetadata
+    };
+
+    setFileInfo(fileInfo);
+
+    const uploadMetadata = {
+      image_type: imageType,
+      geospatial_crs: geoCrs,
+      use_geo_metadata: useGeoMetadata,
+      pixel_scale_meters: pixelScale,
+      ref_latitude: refLatitude,
+      ref_longitude: refLongitude,
+      sam_use_fallback: samUseFallback,
+      sam_min_mask_region_area: samMinMaskRegionArea,
+      sam_points_per_side: samPointsPerSide,
+      sam_pred_iou_thresh: samPredIoUThresh,
+      sam_stability_score_thresh: samStabilityScoreThresh
+    };
+
     try {
-      const fileInfo = {
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2),
-        type: file.type,
-        lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
-        region: selectedRegion,
-        imageType,
-        geoCrs,
-        useGeoMetadata
-      };
-
-      setFileInfo(fileInfo);
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('image_type', imageType);
-      formData.append('geospatial_crs', geoCrs);
-      formData.append('use_geo_metadata', String(useGeoMetadata));
-      formData.append('pixel_scale_meters', pixelScale);
-      formData.append('ref_latitude', refLatitude);
-      formData.append('ref_longitude', refLongitude);
-
-      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`فشل في رفع الملف: ${resp.status} ${txt}`);
-      }
-
-      const result = await resp.json();
+      const uploadId = buildUploadId();
+      const result = await uploadFileChunks(file, uploadId, uploadMetadata);
 
       setUploadProgress(100);
       setTimeout(() => setIsUploading(false), 400);
 
       if (onUploadComplete) onUploadComplete(result);
       if (onProcessingStart) onProcessingStart();
-
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف');
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, onUploadComplete, onProcessingStart]);
+  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
+
+  const uploadRemoteUrl = useCallback(async () => {
+    if (!remoteUrl.trim()) {
+      setError('الرجاء إدخال رابط الملف');
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setError(null);
+    setFileInfo({
+      name: remoteUrl,
+      size: '??',
+      type: 'remote',
+      lastModified: new Date().toLocaleString('ar-SA'),
+      region: selectedRegion,
+      imageType,
+      geoCrs,
+      useGeoMetadata
+    });
+
+    const formData = new FormData();
+    formData.append('remote_url', remoteUrl.trim());
+    formData.append('image_type', imageType);
+    formData.append('geospatial_crs', geoCrs);
+    formData.append('use_geo_metadata', String(useGeoMetadata));
+    formData.append('pixel_scale_meters', pixelScale);
+    formData.append('ref_latitude', refLatitude);
+    formData.append('ref_longitude', refLongitude);
+    formData.append('sam_use_fallback', String(samUseFallback));
+    formData.append('sam_min_mask_region_area', samMinMaskRegionArea);
+    formData.append('sam_points_per_side', samPointsPerSide);
+    formData.append('sam_pred_iou_thresh', samPredIoUThresh);
+    formData.append('sam_stability_score_thresh', samStabilityScoreThresh);
+
+    try {
+      const response = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/remote`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`فشل إرسال الرابط: ${response.status} ${text}`);
+      }
+
+      const result = await response.json();
+      const taskId = result?.task_id;
+
+      // start polling messages to show download progress
+      if (taskId) {
+        if (pollRef.id) {
+          clearInterval(pollRef.id);
+        }
+        pollRef.id = window.setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`);
+            let statusJson = null;
+            if (statusResp.ok) {
+              statusJson = await statusResp.json();
+              const st = statusJson.status;
+              if (st === 'COMPLETED' || st === 'FAILED') {
+                clearInterval(pollRef.id);
+                pollRef.id = null;
+                setTimeout(() => setIsUploading(false), 400);
+                if (st === 'FAILED') {
+                  setUploadProgress(0);
+                } else {
+                  setUploadProgress(100);
+                }
+              }
+            }
+
+            const msgResp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}/messages`);
+            if (msgResp.ok) {
+              const msgsJson = await msgResp.json();
+              const msgs = msgsJson.messages || [];
+              let lastDownloadMsg = null;
+              let lastErrorMsg = null;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i];
+                if (!lastErrorMsg && (m.message_type === 'ERROR' || m.message_type === 'FAILED')) {
+                  lastErrorMsg = m.content;
+                }
+                if (!lastDownloadMsg && m.message_type === 'DOWNLOAD_PROGRESS') {
+                  lastDownloadMsg = m;
+                }
+                if (lastErrorMsg && lastDownloadMsg) break;
+              }
+              if (lastDownloadMsg) {
+                const p = lastDownloadMsg.payload || {};
+                if (p.percent != null) {
+                  setUploadProgress(p.percent);
+                } else if (p.total && p.downloaded) {
+                  setUploadProgress(Math.round((p.downloaded / p.total) * 100));
+                }
+              }
+              if (statusJson?.status === 'FAILED' && lastErrorMsg) {
+                setError(`فشلت مهمة التحميل: ${lastErrorMsg}`);
+              }
+            }
+          } catch (e) {
+            // ignore polling errors, keep attempting
+          }
+        }, 1500);
+      }
+
+      if (!taskId) {
+        setUploadProgress(100);
+        setTimeout(() => setIsUploading(false), 400);
+      }
+
+      if (onUploadComplete) onUploadComplete(result);
+      if (onProcessingStart) onProcessingStart();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف أثناء إرسال الرابط');
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [remoteUrl, selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
+
+  const onDropRejected = useCallback((fileRejections: any[]) => {
+    try {
+      const reasons = fileRejections.map(fr => fr.errors.map((e: any) => e.message).join('; ')).join('; ');
+      setError(`الملف مرفوض: ${reasons}`);
+    } catch {
+      setError('الملف مرفوض أو غير مدعوم.');
+    }
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: acceptedFiles,
-    maxSize: 100 * 1024 * 1024, // 100 ميغابايت (من PDF)
+    maxSize: 1024 * 1024 * 1024, // 1 جيجابايت
     multiple: false
   });
 
@@ -206,72 +503,124 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h3 className="font-semibold text-blue-800 mb-2">📋 مواصفات الرفع:</h3>
         <ul className="text-sm text-blue-700 space-y-1">
-          <li>• <strong>الحجم الأقصى:</strong> 100 ميغابكسل (من ملف PDF)</li>
+          <li>• <strong>الحجم الأقصى:</strong> 1 جيجابايت</li>
           <li>• <strong>الصيغ المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
           <li>• <strong>وقت المعالجة:</strong> 120 ثانية كحد أقصى (من PDF)</li>
           <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
+          <li>• <strong>إعدادات SAM:</strong> يتم تحميلها من صفحة <Link href="/settings" className="text-blue-700 underline">الإعدادات</Link></li>
         </ul>
       </div>
 
-      {/* منطقة سحب وإفلات */}
-      <div className="mb-6">
-        <label className="block text-gray-700 mb-2 font-medium">
-          اختر صورة جوية
-        </label>
-        <div
-          {...getRootProps()}
-          className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
-            isDragActive
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-blue-500'
-          } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <input {...getInputProps()} disabled={isUploading} />
-          
-          {isUploading ? (
-            <div className="space-y-4">
-              <div className="w-16 h-16 mx-auto">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
-              </div>
-              <p className="text-gray-600 font-medium">جاري رفع الملف...</p>
-              
-              {/* شريط التقدم */}
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
-              </div>
-              <p className="text-sm text-gray-500">{uploadProgress}%</p>
-            </div>
-          ) : (
-            <>
-              <svg
-                className="w-16 h-16 mx-auto text-gray-400 mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
-              <p className="text-lg text-gray-600">
-                {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                يدعم: JPG, PNG, TIFF, GeoTIFF
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                (حتى 100 ميغابكسل)
-              </p>
-            </>
-          )}
+      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <h3 className="font-semibold text-slate-800 mb-3">وضع الرفع</h3>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => setUploadMode('file')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'file' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            رفع ملف
+          </button>
+          <button
+            type="button"
+            onClick={() => setUploadMode('url')}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'url' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            رابط خارجي
+          </button>
         </div>
+        <p className="text-sm text-slate-500 mt-3">
+          اختر رفع الملف مباشرةً إذا كان صغيراً، أو استخدم رابط الملف إذا كان كبيراً أو موجوداً في الخدمة السحابية.
+        </p>
       </div>
+
+      {uploadMode === 'url' ? (
+        <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
+          <label className="block text-sm text-slate-700 mb-3">
+            <span className="block mb-1">أدخل رابط Google Drive أو رابط خارجي</span>
+            <input
+              type="url"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              disabled={isUploading}
+              placeholder="https://drive.google.com/..."
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={uploadRemoteUrl}
+            disabled={isUploading || !remoteUrl.trim()}
+            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            استيراد من Google Drive / رابط خارجي
+          </button>
+          <p className="text-xs text-slate-500 mt-3">
+            في هذا الوضع، سيقوم السيرفر بسحب الملف من Google Drive أو المصدر الخارجي بدون رفعه من جهازك.
+          </p>
+        </div>
+      ) : (
+        <div className="mb-6">
+          <label className="block text-gray-700 mb-2 font-medium">
+            اختر صورة جوية
+          </label>
+          <div
+            {...getRootProps()}
+            className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
+              isDragActive
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-300 hover:border-blue-500'
+            } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <input {...getInputProps()} disabled={isUploading} />
+            
+            {isUploading ? (
+              <div className="space-y-4">
+                <div className="w-16 h-16 mx-auto">
+                  <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+                </div>
+                <p className="text-gray-600 font-medium">جاري رفع الملف...</p>
+                
+                {/* شريط التقدم */}
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm text-gray-500">{uploadProgress}%</p>
+              </div>
+            ) : (
+              <>
+                <svg
+                  className="w-16 h-16 mx-auto text-gray-400 mb-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+                <p className="text-lg text-gray-600">
+                  {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
+                </p>
+                <p className="text-sm text-gray-400 mt-2">
+                  يدعم: JPG, PNG, TIFF, GeoTIFF
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  (حتى 1 جيجابايت)
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* اختيار المنطقة */}
       <div className="mb-6">

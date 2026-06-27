@@ -23,19 +23,39 @@ class LandAgent(BaseAgent):
             content="بدء تصنيف وتوصيف طبقة الأراضي المستخرجة وتطبيق القاموس المحلي."
         )
         
-        # استرجاع طبقة الأراضي من الذاكرة المشتركة SQLite
-        layers = memory.get_task_layers(task_id, layer_name="lands")
+        # استرجاع كل طبقات المهمة من الذاكرة المشتركة SQLite.
+        # يستخدم ProjectionAgent أسماء الطبقات بحسب التصنيف المستخلص من SAM، لذلك لا نعتمد على اسم ثابت 'lands'.
+        layers = memory.get_task_layers(task_id)
         if not layers:
             self.message_bus.publish(
                 task_id=task_id,
                 sender=self.name,
                 message_type="WARNING",
-                content="لم يتم العثور على طبقة 'الأراضي' في الذاكرة المشتركة لمعالجتها."
+                content="لم يتم العثور على أي طبقات في الذاكرة المشتركة لمعالجتها."
             )
         else:
+            layer_names = sorted({layer['layer_name'] for layer in layers})
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="ACTION",
+                content=f"اكتُشفت الطبقات التالية: {', '.join(layer_names)}. سيتم تصنيفها جميعاً." 
+            )
+            non_land = {"buildings", "water", "roads"}
             for layer in layers:
                 layer_id = layer["layer_id"]
+                layer_name = (layer.get("layer_name") or "").lower()
                 area_sqm = layer["area_sq_meters"]
+
+                # تخطّي الطبقات التي نعرف أنها ليست أراضٍ
+                if layer_name in non_land:
+                    self.message_bus.publish(
+                        task_id=task_id,
+                        sender=self.name,
+                        message_type="INFO",
+                        content=f"تجاوزت طبقة غير أرضية: {layer_name} (layer_id={layer_id})"
+                    )
+                    continue
                 
                 # تصنيف محلي ديناميكي يعتمد على مساحة قطعة الأرض الزراعية (من قاموس الأوقاف المحلي):
                 # - إذا كانت المساحة > 10,000 م² -> تصنف 'حَوْل' أو 'حَرُورَة' (حقول سهلية شاسعة)

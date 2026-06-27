@@ -1,5 +1,6 @@
 import Link from "next/link";
 import GlobeViewerShell from "./GlobeViewerShell";
+import { Suspense } from "react";
 
 export default function GlobePage() {
   return (
@@ -30,7 +31,9 @@ export default function GlobePage() {
           </div>
 
           <div className="rounded-3xl bg-white p-0 shadow-lg overflow-hidden">
-            <GlobeViewerShell />
+            <Suspense fallback={<div className="p-6">جارٍ تحميل العارض ثلاثي الأبعاد…</div>}>
+              <GlobeViewerShell />
+            </Suspense>
           </div>
         </section>
       </div>
