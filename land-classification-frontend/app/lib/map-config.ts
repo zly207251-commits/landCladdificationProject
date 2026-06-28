@@ -94,7 +94,19 @@ export const PROCESSING_STAGES = {
 
 // إعدادات API (جاهزة للربط)
 export const API_CONFIG = {
-  baseURL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '/api',
+  get baseURL() {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host.includes('.app.github.dev')) {
+        const match = host.match(/-(\d+)\.app\.github\.dev$/);
+        if (match) {
+          const currentPort = match[1];
+          return `https://${host.replace(`-${currentPort}.app.github.dev`, '-8000.app.github.dev')}`;
+        }
+      }
+    }
+    return process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  },
   endpoints: {
     // Backend agent swarm endpoints
     upload: '/tasks/analyze',
