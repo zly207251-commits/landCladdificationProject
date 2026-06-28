@@ -138,9 +138,38 @@ class LandSegmenterSAM:
             raise ValueError(f"Invalid image: mean brightness={mean_brightness:.2f}")
 
         # التحقق إذا كانت الصورة كبيرة وتحتاج إلى المعالجة عبر البلاطات (Tiles)
-        if h > (self.tile_size + self.overlap) or w > (self.tile_size + self.overlap):
-            print(f"📦 الصورة كبيرة ({w}x{h})، سيتم تقسيمها إلى بلاطات (Tiles) لمعالجتها وتوفير الذاكرة...")
-            return self._segment_image_tiled(image)
+        # لتسريع المعالجة بشكل كبير وتجنب استهلاك الذاكرة، سنقوم بتصغير الصورة إذا تجاوزت الحد الأقصى للبلاطة
+        MAX_PROCESSING_DIM = 1024
+        if h > MAX_PROCESSING_DIM or w > MAX_PROCESSING_DIM:
+            print(f"⚡ الصورة كبيرة جداً ({w}x{h}). سيتم تصغيرها مؤقتاً لتسريع معالجة SAM وتوفير الذاكرة...")
+            # حساب الأبعاد الجديدة مع الحفاظ على نسبة العرض إلى الارتفاع
+            if w > h:
+                new_w = MAX_PROCESSING_DIM
+                new_h = int(h * (MAX_PROCESSING_DIM / w))
+            else:
+                new_h = MAX_PROCESSING_DIM
+                new_w = int(w * (MAX_PROCESSING_DIM / h))
+            
+            resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # معالجة الصورة المصغرة في بلاطة واحدة سريعة
+            resized_segments = self._segment_single_tile(resized_image)
+            
+            # إعادة تكبير المضلعات والأقنعة للأبعاد الأصلية
+            scale_x = w / new_w
+            scale_y = h / new_h
+            
+            for seg in resized_segments:
+                if seg.get('mask') is not None:
+                    seg['mask'] = cv2.resize(seg['mask'], (w, h), interpolation=cv2.INTER_NEAREST)
+                
+                scaled_polys = []
+                for poly in seg.get('polygons', []):
+                    scaled_poly = [[pt[0] * scale_x, pt[1] * scale_y] for pt in poly]
+                    scaled_polys.append(scaled_poly)
+                seg['polygons'] = scaled_polys
+            
+            return resized_segments
         else:
             return self._segment_single_tile(image)
 
