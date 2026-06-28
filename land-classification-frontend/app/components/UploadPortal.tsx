@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Link from 'next/link';
 import { API_CONFIG } from '@/app/lib/map-config';
@@ -40,8 +40,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
-  const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per chunk to stay below common GitHub.dev/proxy limits
+  const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per chunk to stay below common GitHub.dev/proxy and server 413 limits
   const UPLOAD_CONCURRENCY = 6; // Maximize parallel upload requests for maximum speed
+  const MAX_RETRIES = 2;
 
   const buildUploadId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -51,81 +52,101 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   };
 
   // poll ref to allow cleanup
-  const pollRef = ({} as { id?: number | null });
+  const pollRef = useRef<number | null>(null);
 
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE_BYTES));
     const totalBytes = file.size;
 
-    // track progress per chunk (bytes uploaded so far for each active chunk)
+    const getChunkBounds = (chunkIndex: number) => {
+      const start = chunkIndex * CHUNK_SIZE_BYTES;
+      return { start, end: Math.min(start + CHUNK_SIZE_BYTES, file.size) };
+    };
+
     const bytesUploading: Record<number, number> = {};
     let bytesCompleted = 0;
 
     const updateOverallProgress = () => {
       const uploadingSum = Object.values(bytesUploading).reduce((a, b) => a + b, 0);
       const progress = Math.round(((bytesCompleted + uploadingSum) / totalBytes) * 100);
-      setUploadProgress(progress);
+      setUploadProgress(Math.min(100, Math.max(0, progress)));
     };
 
     const uploadChunkWithProgress = (chunkIndex: number, start: number, end: number) => {
       return new Promise<void>((resolve, reject) => {
-        const chunkBlob = file.slice(start, end);
-        const formData = new FormData();
-        formData.append('upload_id', uploadId);
-        formData.append('chunk_index', String(chunkIndex));
-        formData.append('total_chunks', String(totalChunks));
-        formData.append('filename', file.name);
-        formData.append('file', chunkBlob, file.name);
-        formData.append('image_type', metadata.image_type);
-        formData.append('geospatial_crs', metadata.geospatial_crs);
-        formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
-        formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
-        formData.append('ref_latitude', metadata.ref_latitude);
-        formData.append('ref_longitude', metadata.ref_longitude);
-        formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
-        formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
-        formData.append('sam_points_per_side', metadata.sam_points_per_side);
-        formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
-        formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+        const attemptUpload = (attempt: number) => {
+          const chunkBlob = file.slice(start, end);
+          const formData = new FormData();
+          formData.append('upload_id', uploadId);
+          formData.append('chunk_index', String(chunkIndex));
+          formData.append('total_chunks', String(totalChunks));
+          formData.append('filename', file.name);
+          formData.append('file', chunkBlob, file.name);
+          formData.append('image_type', metadata.image_type);
+          formData.append('geospatial_crs', metadata.geospatial_crs);
+          formData.append('use_geo_metadata', String(metadata.use_geo_metadata));
+          formData.append('pixel_scale_meters', metadata.pixel_scale_meters);
+          formData.append('ref_latitude', metadata.ref_latitude);
+          formData.append('ref_longitude', metadata.ref_longitude);
+          formData.append('sam_use_fallback', String(metadata.sam_use_fallback));
+          formData.append('sam_min_mask_region_area', metadata.sam_min_mask_region_area);
+          formData.append('sam_points_per_side', metadata.sam_points_per_side);
+          formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
+          formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
 
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
+          xhr.timeout = 60000;
 
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) {
-            bytesUploading[chunkIndex] = ev.loaded;
-            updateOverallProgress();
-          }
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable) {
+              bytesUploading[chunkIndex] = ev.loaded;
+              updateOverallProgress();
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const chunkSize = end - start;
+              bytesCompleted += chunkSize;
+              delete bytesUploading[chunkIndex];
+              updateOverallProgress();
+              resolve();
+            } else if (attempt < MAX_RETRIES) {
+              setTimeout(() => attemptUpload(attempt + 1), 500 * (attempt + 1));
+            } else {
+              reject(new Error(`فشل في رفع الجزء ${chunkIndex + 1}: ${xhr.status} ${xhr.responseText}`));
+            }
+          };
+
+          xhr.onerror = () => {
+            if (attempt < MAX_RETRIES) {
+              setTimeout(() => attemptUpload(attempt + 1), 500 * (attempt + 1));
+            } else {
+              reject(new Error('Network error أثناء رفع الجزء'));
+            }
+          };
+          xhr.ontimeout = () => {
+            if (attempt < MAX_RETRIES) {
+              setTimeout(() => attemptUpload(attempt + 1), 500 * (attempt + 1));
+            } else {
+              reject(new Error('انتهت مهلة رفع الجزء'));
+            }
+          };
+          xhr.onabort = () => reject(new Error('Upload aborted'));
+          xhr.send(formData);
         };
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            // mark chunk as completed
-            const chunkSize = end - start;
-            bytesCompleted += chunkSize;
-            delete bytesUploading[chunkIndex];
-            updateOverallProgress();
-            resolve();
-          } else {
-            reject(new Error(`فشل في رفع الجزء ${chunkIndex + 1}: ${xhr.status} ${xhr.responseText}`));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error(xhr.status ? `Network error أثناء رفع الجزء (${xhr.status})` : 'Network error أثناء رفع الجزء'));
-        xhr.onabort = () => reject(new Error('Upload aborted'));
-        xhr.send(formData);
+        attemptUpload(0);
       });
     };
 
-    // Create a queue of chunk indices
     const chunks: Array<{ idx: number; start: number; end: number }> = [];
     for (let idx = 0; idx < totalChunks; idx += 1) {
-      const start = idx * CHUNK_SIZE_BYTES;
-      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
+      const { start, end } = getChunkBounds(idx);
       chunks.push({ idx, start, end });
     }
 
-    // run uploads with limited concurrency
     let active = 0;
     let pointer = 0;
 
@@ -139,7 +160,6 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         while (active < UPLOAD_CONCURRENCY && pointer < chunks.length) {
           const { idx, start, end } = chunks[pointer++];
           active += 1;
-          // initialize
           bytesUploading[idx] = 0;
           uploadChunkWithProgress(idx, start, end)
             .then(() => {
@@ -190,9 +210,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   // cleanup polling on unmount
   useEffect(() => {
     return () => {
-      try {
-        if (pollRef.id) clearInterval(pollRef.id);
-      } catch (e) {}
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current as number);
+      }
     };
   }, []);
 
@@ -256,8 +276,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       sam_stability_score_thresh: samStabilityScoreThresh
     };
 
+    const uploadId = buildUploadId();
+
     try {
-      const uploadId = buildUploadId();
       const result = await uploadFileChunks(file, uploadId, uploadMetadata);
 
       setUploadProgress(100);
@@ -322,25 +343,24 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
 
       // start polling messages to show download progress
       if (taskId) {
-        if (pollRef.id) {
-          clearInterval(pollRef.id);
+        if (pollRef.current !== null) {
+          clearInterval(pollRef.current as number);
         }
-        pollRef.id = window.setInterval(async () => {
+
+        pollRef.current = window.setInterval(async () => {
           try {
             const statusResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.status.replace('{task_id}', taskId)}`);
-            let statusJson = null;
+            let statusJson: any = null;
+
             if (statusResp.ok) {
               statusJson = await statusResp.json();
               const st = statusJson.status;
               if (st === 'COMPLETED' || st === 'FAILED') {
-                clearInterval(pollRef.id);
-                pollRef.id = null;
-                setTimeout(() => setIsUploading(false), 400);
-                if (st === 'FAILED') {
-                  setUploadProgress(0);
-                } else {
-                  setUploadProgress(100);
+                if (pollRef.current !== null) {
+                  clearInterval(pollRef.current as number);
+                  pollRef.current = null;
                 }
+                setUploadProgress(100);
               }
             }
 
@@ -348,8 +368,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
             if (msgResp.ok) {
               const msgsJson = await msgResp.json();
               const msgs = msgsJson.messages || [];
-              let lastDownloadMsg = null;
-              let lastErrorMsg = null;
+              let lastDownloadMsg: any = null;
+              let lastErrorMsg: string | null = null;
+
               for (let i = msgs.length - 1; i >= 0; i--) {
                 const m = msgs[i];
                 if (!lastErrorMsg && (m.message_type === 'ERROR' || m.message_type === 'FAILED')) {
@@ -360,6 +381,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 }
                 if (lastErrorMsg && lastDownloadMsg) break;
               }
+
               if (lastDownloadMsg) {
                 const p = lastDownloadMsg.payload || {};
                 if (p.percent != null) {
@@ -368,6 +390,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                   setUploadProgress(Math.round((p.downloaded / p.total) * 100));
                 }
               }
+
               if (statusJson?.status === 'FAILED' && lastErrorMsg) {
                 setError(`فشلت مهمة التحميل: ${lastErrorMsg}`);
               }
@@ -690,16 +713,16 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
           <h4 className="font-semibold text-red-800 mb-2">⚠️ خطأ في الرفع</h4>
           <p className="text-sm text-red-700">{error}</p>
-          <button
-            onClick={() => setError(null)}
-            className="mt-2 text-sm text-red-600 hover:text-red-800"
-          >
-            إغلاق
-          </button>
+          <div className="mt-3">
+            <button
+              onClick={() => setError(null)}
+              className="text-sm text-red-600 hover:text-red-800"
+            >
+              إغلاق
+            </button>
+          </div>
         </div>
       )}
-
-      {/* معلومات النظام المستقبلي */}
       <div className="mt-8 p-4 bg-purple-50 rounded-lg border border-purple-200">
         <h3 className="font-semibold text-purple-800 mb-2">
           🚀 النظام المستقبلي:

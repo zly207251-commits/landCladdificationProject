@@ -10,7 +10,11 @@ class SharedMemory:
     تُستخدم لحفظ حالة المهام، بيانات الطبقات الجغرافية، والمراسلات بين الوكلاء.
     """
     def __init__(self, db_path: str = "shared_memory.db"):
+        if not os.path.isabs(db_path):
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+            db_path = os.path.join(project_root, db_path)
         self.db_path = db_path
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
     def _get_connection(self):
@@ -88,6 +92,10 @@ class SharedMemory:
                     (task_id, image_path, "PENDING", metadata_str)
                 )
                 conn.commit()
+                try:
+                    print(f"[SharedMemory] create_task: inserted {task_id} -> {self.db_path}")
+                except Exception:
+                    pass
             return True
         except sqlite3.IntegrityError:
             # في حال كانت المهمة موجودة مسبقاً
@@ -122,7 +130,16 @@ class SharedMemory:
             if row:
                 data = dict(row)
                 data['metadata'] = json.loads(data['metadata']) if data['metadata'] else {}
+                try:
+                    print(f"[SharedMemory] get_task: found {task_id} in {self.db_path}")
+                except Exception:
+                    pass
                 return data
+            else:
+                try:
+                    print(f"[SharedMemory] get_task: NOT FOUND {task_id} in {self.db_path}")
+                except Exception:
+                    pass
         return None
 
     def get_tasks(self, limit: int = 10) -> List[Dict[str, Any]]:

@@ -18,6 +18,9 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [backendStatus, setBackendStatus] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [estimatedTime, setEstimatedTime] = useState<number>(120); // 120 ثانية من PDF
 
   // تهيئة مراحل المعالجة
@@ -62,6 +65,8 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           setCurrentStage('gis_generation');
           setProcessingTime(estimatedTime);
           setIsProcessing(false);
+          setRetryError(null);
+          setRetryMessage(null);
           if (onComplete) onComplete();
           stopped = true;
           return;
@@ -70,7 +75,8 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
         if (data.status === 'FAILED') {
           setCurrentStage('specialist_processing');
           setIsProcessing(false);
-          setPollError('المهمة فشلت على الخادم. تحقق من السجلات أو أعد المحاولة.');
+          setRetryError(null);
+          setRetryMessage('المهمة فشلت على الخادم. يمكنك إعادة المحاولة دون إعادة الرفع.');
           if (onError) onError('المهمة فشلت في الخادم');
           stopped = true;
           return;
@@ -312,6 +318,54 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           🔄 إعادة تحميل
         </button>
       </div>
+
+      {retryMessage && (
+        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
+          {retryMessage}
+        </div>
+      )}
+
+      {retryError && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          {retryError}
+        </div>
+      )}
+
+      {backendStatus === 'FAILED' && (
+        <div className="mt-6 flex flex-col gap-3">
+          <button
+            disabled={isRetrying}
+            onClick={async () => {
+              if (!jobId) return;
+              setIsRetrying(true);
+              setRetryError(null);
+              setRetryMessage('جارٍ إعادة محاولة المعالجة...');
+
+              try {
+                const resp = await fetch(`${API_CONFIG.baseURL}/tasks/${jobId}/retry`, {
+                  method: 'POST'
+                });
+                if (!resp.ok) {
+                  const txt = await resp.text();
+                  throw new Error(`فشل إعادة المحاولة: ${resp.status} ${txt}`);
+                }
+
+                setRetryMessage('تم إرسال طلب إعادة المحاولة. سيتم متابعة الحالة الآن.');
+                setIsProcessing(true);
+                setTimeout(() => startProcessing(), 500);
+              } catch (err) {
+                setRetryError(err instanceof Error ? err.message : 'حدث خطأ أثناء إعادة المحاولة');
+                setRetryMessage(null);
+              } finally {
+                setIsRetrying(false);
+              }
+            }}
+            className="py-3 px-6 bg-orange-600 text-white rounded-xl font-semibold hover:bg-orange-700 transition-all shadow-lg"
+          >
+            {isRetrying ? '⏳ جاري إعادة المحاولة...' : '🔁 إعادة محاولة المعالجة'}
+          </button>
+        </div>
+      )}
 
       {/* تذييل */}
       <div className="mt-6 pt-6 border-t border-gray-200">

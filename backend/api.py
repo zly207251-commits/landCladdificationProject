@@ -19,7 +19,7 @@ from PIL import Image
 import requests
 import mercantile
 from pyproj import Transformer
-from urllib.parse import urlparse, parse_qs, unquote, urljoin
+from urllib.parse import urlparse, parse_qs, unquote, urljoin, urlencode
 
 rasterio_spec = importlib.util.find_spec('rasterio')
 if rasterio_spec is not None:
@@ -106,7 +106,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return response
 
 # تهيئة قاعدة بيانات الذاكرة المشتركة وباص الرسائل
-DB_PATH = "shared_memory.db"
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DB_PATH = os.getenv("BACKEND_DB_PATH", os.path.join(BASE_DIR, "shared_memory.db"))
+UPLOAD_DIR = os.getenv("BACKEND_UPLOAD_DIR", os.path.join(BASE_DIR, "temp_uploads"))
+CHUNK_UPLOAD_DIR = os.getenv("BACKEND_CHUNK_UPLOAD_DIR", os.path.join(UPLOAD_DIR, "chunks"))
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(CHUNK_UPLOAD_DIR, exist_ok=True)
+
 memory = SharedMemory(db_path=DB_PATH)
 message_bus = MessageBus(memory)
 
@@ -152,16 +159,28 @@ def ensure_segmenter(timeout: float = 60.0):
     except Exception as e:
         print(f"⚠️ Failed synchronous segmenter load fallback: {e}")
     return segmenter
+_segmenter: LandSegmenterSAM | None = None
 
-# إنشاء مجلد مؤقت لحفظ الصور المرفوعة للتحليل
-UPLOAD_DIR = "temp_uploads"
-CHUNK_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "chunks")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(CHUNK_UPLOAD_DIR, exist_ok=True)
+def get_segmenter() -> LandSegmenterSAM:
+    global _segmenter
+    if _segmenter is None:
+        _segmenter = LandSegmenterSAM()
+    return _segmenter
 
 
 def get_chunk_dir(upload_id: str) -> str:
     return os.path.join(CHUNK_UPLOAD_DIR, upload_id)
+
+
+# Diagnostic info: print DB path used by SharedMemory to help debug missing tasks
+print(f"[startup] BASE_DIR={BASE_DIR}")
+print(f"[startup] BACKEND_DB_PATH={os.getenv('BACKEND_DB_PATH', '<unset>')}")
+print(f"[startup] BACKEND_UPLOAD_DIR={os.getenv('BACKEND_UPLOAD_DIR', '<unset>')}")
+try:
+    print(f"[startup] DB_PATH configured: {DB_PATH}")
+    print(f"[startup] SharedMemory.db_path: {getattr(memory, 'db_path', '<missing>')}")
+except Exception:
+    pass
 
 
 def write_chunk_metadata(upload_id: str, metadata: dict):
@@ -211,6 +230,17 @@ def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
     if match:
         unescaped_url = html_lib.unescape(match.group(1))
         return urljoin(base_url, unescaped_url)
+
+    # Look for the download form and construct its GET URL.
+    form_match = re.search(r'<form[^>]*action="([^"]*)"[^>]*>(.*?)</form>', html, re.DOTALL)
+    if form_match:
+        action_url = form_match.group(1)
+        form_body = form_match.group(2)
+        params = {}
+        for inp in re.finditer(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form_body):
+            params[inp.group(1)] = inp.group(2)
+        if params:
+            return f"{action_url}?{urlencode(params)}"
 
     # fallback: if the page includes a confirm input, add it to the URL.
     match = re.search(r'name="confirm" value="([0-9A-Za-z_-]+)"', html)
@@ -419,7 +449,7 @@ def run_agent_swarm_background(task_id: str, image_path: str):
             memory.update_task_status(task_id, "FAILED")
             return
         # بناء وتشغيل الرسم البياني للوكلاء
-        compiled_graph = create_swarm_graph(memory, message_bus, seg)
+        compiled_graph = create_swarm_graph(memory, message_bus, get_segmenter())
         initial_state = {
             "task_id": task_id,
             "image_path": image_path,
@@ -443,6 +473,28 @@ def run_agent_swarm_background(task_id: str, image_path: str):
 @app.get("/tasks/analyze/chunk/config", summary="Get safe chunk upload configuration")
 def chunk_upload_config():
     return get_chunk_upload_config()
+
+
+@app.get("/tasks/analyze/chunk/status", summary="Check which chunks are already stored for a resumable upload")
+async def get_chunk_upload_status(upload_id: str):
+    metadata = read_chunk_metadata(upload_id)
+    if not metadata:
+        return {
+            "upload_id": upload_id,
+            "exists": False,
+            "uploaded_chunks": [],
+            "total_chunks": 0,
+            "filename": None,
+        }
+
+    uploaded_chunks = metadata.get("uploaded_chunks", [])
+    return {
+        "upload_id": upload_id,
+        "exists": True,
+        "uploaded_chunks": sorted(uploaded_chunks),
+        "total_chunks": metadata.get("total_chunks", 0),
+        "filename": metadata.get("filename"),
+    }
 
 
 @app.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
@@ -470,7 +522,8 @@ async def upload_task_chunk(
     upload_dir = get_chunk_dir(upload_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    metadata = {
+    metadata = read_chunk_metadata(upload_id) or {}
+    metadata.update({
         "filename": filename,
         "image_type": image_type,
         "geospatial_crs": geospatial_crs,
@@ -484,7 +537,11 @@ async def upload_task_chunk(
         "sam_pred_iou_thresh": sam_pred_iou_thresh,
         "sam_stability_score_thresh": sam_stability_score_thresh,
         "total_chunks": total_chunks
-    }
+    })
+
+    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
+    uploaded_chunks.add(chunk_index)
+    metadata["uploaded_chunks"] = sorted(uploaded_chunks)
 
     meta_path = os.path.join(upload_dir, "metadata.json")
     if not os.path.exists(meta_path):
@@ -529,6 +586,12 @@ async def complete_task_chunk_upload(
     total_chunks = metadata.get("total_chunks")
     if total_chunks is None:
         raise HTTPException(status_code=400, detail="عدد الأجزاء مفقود")
+
+    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
+    expected_chunks = set(range(int(total_chunks)))
+    missing_chunks = sorted(expected_chunks - uploaded_chunks)
+    if missing_chunks:
+        raise HTTPException(status_code=400, detail=f"الأجزاء غير المكتملة: {missing_chunks}")
 
     file_extension = os.path.splitext(metadata["filename"])[1] or ".bin"
     task_id = f"task_{uuid.uuid4().hex[:8]}"
@@ -653,6 +716,29 @@ def get_task_messages(task_id: str):
         raise HTTPException(status_code=404, detail='Task not found')
     msgs = memory.get_messages(task_id)
     return {"task_id": task_id, "messages": msgs}
+
+@app.post('/tasks/{task_id}/retry', summary='Retry processing for a failed task')
+def retry_task_processing(task_id: str, background_tasks: BackgroundTasks):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail='Task not found')
+
+    if task.get('status') != 'FAILED':
+        raise HTTPException(status_code=400, detail='يمكن إعادة المحاولة فقط للمهمات التي فشلت سابقاً.')
+
+    image_path = task.get('image_path')
+    if not image_path or not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail='الصورة المرفوعة للمهمة غير موجودة.')
+
+    memory.log_message(task_id, 'system', 'RETRY', 'إعادة محاولة معالجة المهمة بعد الفشل.', {})
+    memory.update_task_status(task_id, 'PENDING')
+    background_tasks.add_task(run_agent_swarm_background, task_id, image_path)
+
+    return {
+        'task_id': task_id,
+        'status': 'PENDING',
+        'message': 'تمت إعادة محاولة معالجة المهمة بنجاح.'
+    }
 
 @app.post("/tasks/analyze", summary="1. بدء تحليل الصورة عبر فريق الوكلاء")
 async def analyze_image_with_agents(
@@ -1206,5 +1292,11 @@ async def segment_image(file: UploadFile = File(...)):
     return StreamingResponse(io.BytesIO(buffer.tobytes()), media_type="image/png")
 
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    use_reload = os.getenv("BACKEND_RELOAD", "false").lower() in {"1", "true", "yes"}
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=use_reload,
+    )
     
