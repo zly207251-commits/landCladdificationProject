@@ -1,0 +1,14 @@
+{
+  "login": [
+    "[Execution Failure] Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/\nCall log:\n  - navigating to \"http://localhost:3000/\", waiting until \"load\"\n"
+  ],
+  "create": [
+    "[Execution Failure] Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/\nCall log:\n  - navigating to \"http://localhost:3000/\", waiting until \"load\"\n"
+  ],
+  "update": [
+    "[Execution Failure] Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/settings\nCall log:\n  - navigating to \"http://localhost:3000/settings\", waiting until \"load\"\n",
+    "[Execution Failure] Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/settings\nCall log:\n  - navigating to \"http://localhost:3000/settings\", waiting until \"load\"\n"
+  ],
+  "delete": [],
+  "general": []
+}
