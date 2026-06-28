@@ -10,10 +10,10 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
-      - BACKEND_DB_PATH=/app/shared_memory.db
+      - BACKEND_DB_PATH=/app/data/shared_memory.db
       - BACKEND_UPLOAD_DIR=/app/temp_uploads
     volumes:
-      - ./backend/shared_memory.db:/app/shared_memory.db
+      - ./backend/data:/app/data
       - ./backend/temp_uploads:/app/temp_uploads
     restart: unless-stopped
 
