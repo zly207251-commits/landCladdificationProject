@@ -105,7 +105,7 @@ export const API_CONFIG = {
         }
       }
     }
-    return process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://34.61.126.255:8000';
+    return process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://34.61.126.255:8080';
   },
   endpoints: {
     // Backend agent swarm endpoints

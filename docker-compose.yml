@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: landcla_backend
     ports:
-      - "8000:8000"
+      - "8080:8000"
     environment:
       - PORT=8000
       - BACKEND_DB_PATH=/app/data/shared_memory.db
@@ -25,7 +25,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://34.61.126.255:8000
+      - NEXT_PUBLIC_API_URL=http://34.61.126.255:8080
     depends_on:
       - backend
     restart: unless-stopped
