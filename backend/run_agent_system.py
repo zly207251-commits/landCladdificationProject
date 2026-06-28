@@ -4,6 +4,7 @@ import json
 from agent_system.memory import SharedMemory
 from agent_system.messaging import MessageBus
 from agent_system.graph import create_swarm_graph
+from land_classifier import LandSegmenterSAM
 
 def run_verification():
     """سكربت تشغيل رئيسي للتحقق من سلامة البنية التحتية الخلفية وتدفق الوكلاء."""
@@ -29,7 +30,7 @@ def run_verification():
     
     # 3. إنشاء مهمة فحص تجريبية بمعاملات مساحية (صنعاء، اليمن كمثال)
     task_id = "task_demo_001"
-    image_path = "e:/الاوقاف/LandClassificationProject/mock_satellite_image.png"
+    image_path = "e:/الاوقاف/LandClassificationProject/1974.tif"
     task_metadata = {
         "pixel_scale_meters": 0.5,  # دقة البكسل: 1 بكسل يمثل 0.5 متر
         "ref_latitude": 15.3694,    # إحداثيات خط العرض

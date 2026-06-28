@@ -25,13 +25,13 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileInfo, setFileInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRegion, setSelectedRegion] = useState<string>('riyadh');
+  const [selectedRegion, setSelectedRegion] = useState<string>('sanaa');
   const [imageType, setImageType] = useState<ImageType>('regular');
   const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
   const [remoteUrl, setRemoteUrl] = useState('');
   const [pixelScale, setPixelScale] = useState('0.5');
-  const [refLatitude, setRefLatitude] = useState('24.7136');
-  const [refLongitude, setRefLongitude] = useState('46.6753');
+  const [refLatitude, setRefLatitude] = useState('15.3694');
+  const [refLongitude, setRefLongitude] = useState('44.1910');
   const [geoCrs, setGeoCrs] = useState('EPSG:4326');
   const [useGeoMetadata, setUseGeoMetadata] = useState(true);
   const [samUseFallback, setSamUseFallback] = useState(false);
@@ -196,12 +196,24 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     };
   }, []);
 
-  // المناطق المتاحة (من الفرونت اند الحالي + PDF)
+  // تحديث الإحداثيات تلقائياً عند تغيير المنطقة
+  useEffect(() => {
+    const region = regions.find(r => r.id === selectedRegion);
+    if (region && region.coordinates) {
+      setRefLatitude(String(region.coordinates[0]));
+      setRefLongitude(String(region.coordinates[1]));
+    }
+  }, [selectedRegion]);
+
+  // المناطق المتاحة (محافظات اليمن وهيئات الأوقاف)
   const regions = [
-    { id: 'riyadh', name: 'منطقة 1 - الرياض', coordinates: [24.7136, 46.6753] },
-    { id: 'jeddah', name: 'منطقة 2 - جدة', coordinates: [21.4858, 39.1925] },
-    { id: 'dammam', name: 'منطقة 3 - الدمام', coordinates: [26.4207, 50.0888] },
-    { id: 'custom', name: 'منطقة مخصصة', coordinates: null }
+    { id: 'sanaa', name: 'أوقاف محافظة صنعاء', coordinates: [15.3694, 44.1910] },
+    { id: 'ibb', name: 'أوقاف محافظة إب', coordinates: [13.9669, 44.1833] },
+    { id: 'taiz', name: 'أوقاف محافظة تعز', coordinates: [13.5794, 44.0206] },
+    { id: 'dhamar', name: 'أوقاف محافظة ذمار', coordinates: [14.5422, 44.4078] },
+    { id: 'hodeidah', name: 'أوقاف محافظة الحديدة', coordinates: [14.7979, 42.9530] },
+    { id: 'hadramout', name: 'أوقاف محافظة حضرموت', coordinates: [14.5147, 49.1242] },
+    { id: 'custom', name: 'منطقة مخصصة (إدخال يدوي)', coordinates: null }
   ];
 
   // أنواع الملفات المدعومة
