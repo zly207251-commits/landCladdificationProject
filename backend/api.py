@@ -486,7 +486,9 @@ async def upload_task_chunk(
         "total_chunks": total_chunks
     }
 
-    write_chunk_metadata(upload_id, metadata)
+    meta_path = os.path.join(upload_dir, "metadata.json")
+    if not os.path.exists(meta_path):
+        write_chunk_metadata(upload_id, metadata)
 
     chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")
     try:

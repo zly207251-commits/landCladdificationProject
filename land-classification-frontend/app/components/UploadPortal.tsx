@@ -41,7 +41,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
   const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per chunk to stay below common GitHub.dev/proxy limits
-  const UPLOAD_CONCURRENCY = 2; // fewer concurrent requests for more reliable uploads
+  const UPLOAD_CONCURRENCY = 6; // Maximize parallel upload requests for maximum speed
 
   const buildUploadId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
