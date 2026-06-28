@@ -487,14 +487,26 @@ async def get_chunk_upload_status(upload_id: str):
             "filename": None,
         }
 
-    uploaded_chunks = metadata.get("uploaded_chunks", [])
+    # Detect uploaded chunks directly from files on disk
+    chunk_dir = get_chunk_dir(upload_id)
+    uploaded_chunks = []
+    total_chunks = metadata.get("total_chunks", 0)
+    for idx in range(int(total_chunks)):
+        if os.path.exists(os.path.join(chunk_dir, f"chunk_{idx}")):
+            uploaded_chunks.append(idx)
+
     return {
         "upload_id": upload_id,
         "exists": True,
         "uploaded_chunks": sorted(uploaded_chunks),
-        "total_chunks": metadata.get("total_chunks", 0),
+        "total_chunks": total_chunks,
         "filename": metadata.get("filename"),
     }
+
+
+def _write_file_sync(path: str, content: bytes):
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 @app.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
@@ -522,36 +534,31 @@ async def upload_task_chunk(
     upload_dir = get_chunk_dir(upload_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    metadata = read_chunk_metadata(upload_id) or {}
-    metadata.update({
-        "filename": filename,
-        "image_type": image_type,
-        "geospatial_crs": geospatial_crs,
-        "use_geo_metadata": use_geo_metadata,
-        "pixel_scale_meters": pixel_scale_meters,
-        "ref_latitude": ref_latitude,
-        "ref_longitude": ref_longitude,
-        "sam_use_fallback": sam_use_fallback,
-        "sam_min_mask_region_area": sam_min_mask_region_area,
-        "sam_points_per_side": sam_points_per_side,
-        "sam_pred_iou_thresh": sam_pred_iou_thresh,
-        "sam_stability_score_thresh": sam_stability_score_thresh,
-        "total_chunks": total_chunks
-    })
-
-    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
-    uploaded_chunks.add(chunk_index)
-    metadata["uploaded_chunks"] = sorted(uploaded_chunks)
-
+    # metadata.json only needs to be written once (no need to update uploaded_chunks in it)
     meta_path = os.path.join(upload_dir, "metadata.json")
     if not os.path.exists(meta_path):
+        metadata = {
+            "filename": filename,
+            "image_type": image_type,
+            "geospatial_crs": geospatial_crs,
+            "use_geo_metadata": use_geo_metadata,
+            "pixel_scale_meters": pixel_scale_meters,
+            "ref_latitude": ref_latitude,
+            "ref_longitude": ref_longitude,
+            "sam_use_fallback": sam_use_fallback,
+            "sam_min_mask_region_area": sam_min_mask_region_area,
+            "sam_points_per_side": sam_points_per_side,
+            "sam_pred_iou_thresh": sam_pred_iou_thresh,
+            "sam_stability_score_thresh": sam_stability_score_thresh,
+            "total_chunks": total_chunks
+        }
         write_chunk_metadata(upload_id, metadata)
 
     chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")
     try:
-        with open(chunk_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+        content = await file.read()
+        # Offload blocking write to a background thread to prevent blocking Uvicorn's async event loop
+        await asyncio.to_thread(_write_file_sync, chunk_path, content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"تعذر حفظ جزء الملف: {str(e)}")
 
@@ -587,9 +594,14 @@ async def complete_task_chunk_upload(
     if total_chunks is None:
         raise HTTPException(status_code=400, detail="عدد الأجزاء مفقود")
 
-    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
-    expected_chunks = set(range(int(total_chunks)))
-    missing_chunks = sorted(expected_chunks - uploaded_chunks)
+    # Validate that all chunk files physically exist on disk
+    chunk_dir = get_chunk_dir(upload_id)
+    missing_chunks = []
+    for idx in range(int(total_chunks)):
+        chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
+        if not os.path.exists(chunk_path):
+            missing_chunks.append(idx)
+
     if missing_chunks:
         raise HTTPException(status_code=400, detail=f"الأجزاء غير المكتملة: {missing_chunks}")
 
@@ -599,7 +611,8 @@ async def complete_task_chunk_upload(
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
     try:
-        merge_chunk_files(upload_id, temp_file_path, total_chunks)
+        # Offload file merge to background thread
+        await asyncio.to_thread(merge_chunk_files, upload_id, temp_file_path, total_chunks)
         cleanup_chunk_upload(upload_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")

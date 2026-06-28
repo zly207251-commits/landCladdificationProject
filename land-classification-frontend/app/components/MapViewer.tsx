@@ -414,7 +414,6 @@ export default function MapViewer({
         </div>
       )}
       <MapContainer
-        whenCreated={setMap}
         center={mapCenter}
         zoom={mapZoom}
         className="h-full w-full rounded-lg"

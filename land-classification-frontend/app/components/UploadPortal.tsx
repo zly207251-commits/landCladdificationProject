@@ -55,6 +55,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const pollRef = useRef<number | null>(null);
 
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
+    // Dynamic chunk size: 12MB for large files (>150MB) to reduce HTTP connection overhead and speed up uploads, 4MB default
+    const CHUNK_SIZE_BYTES = file.size > 150 * 1024 * 1024 ? 12 * 1024 * 1024 : 4 * 1024 * 1024;
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE_BYTES));
     const totalBytes = file.size;
 
