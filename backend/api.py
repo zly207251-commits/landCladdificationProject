@@ -154,10 +154,12 @@ def normalize_remote_url(remote_url: str) -> str:
 
 
 def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
+    import html as html_lib
     # Google Drive may render a link on the warning page with the download URL.
     match = re.search(r'href="([^"]*uc\?export=download[^"]*)"', html)
     if match:
-        return urljoin(base_url, match.group(1))
+        unescaped_url = html_lib.unescape(match.group(1))
+        return urljoin(base_url, unescaped_url)
 
     # fallback: if the page includes a confirm input, add it to the URL.
     match = re.search(r'name="confirm" value="([0-9A-Za-z_-]+)"', html)
