@@ -40,8 +40,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
 
-  const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16MB per chunk to reduce overhead for large uploads
-  const UPLOAD_CONCURRENCY = 5; // more concurrent uploads for faster throughput
+  const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per chunk to stay below common GitHub.dev/proxy limits
+  const UPLOAD_CONCURRENCY = 2; // fewer concurrent requests for more reliable uploads
 
   const buildUploadId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -54,7 +54,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const pollRef = ({} as { id?: number | null });
 
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE_BYTES));
     const totalBytes = file.size;
 
     // track progress per chunk (bytes uploaded so far for each active chunk)
@@ -111,7 +111,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
           }
         };
 
-        xhr.onerror = () => reject(new Error('Network error أثناء رفع الجزء'));
+        xhr.onerror = () => reject(new Error(xhr.status ? `Network error أثناء رفع الجزء (${xhr.status})` : 'Network error أثناء رفع الجزء'));
         xhr.onabort = () => reject(new Error('Upload aborted'));
         xhr.send(formData);
       });

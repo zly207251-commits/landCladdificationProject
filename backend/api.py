@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import uvicorn
 import asyncio
 import numpy as np
@@ -53,6 +55,55 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+DEFAULT_CHUNK_SIZE_BYTES = 4 * 1024 * 1024
+DEFAULT_CHUNK_UPLOAD_CONCURRENCY = 2
+
+
+def get_chunk_upload_config() -> dict:
+    """Return safe chunk upload settings for environments with low request-body limits."""
+    try:
+        chunk_size = int(os.getenv("CHUNK_UPLOAD_SIZE_BYTES", str(DEFAULT_CHUNK_SIZE_BYTES)))
+    except ValueError:
+        chunk_size = DEFAULT_CHUNK_SIZE_BYTES
+
+    try:
+        concurrency = int(os.getenv("CHUNK_UPLOAD_CONCURRENCY", str(DEFAULT_CHUNK_UPLOAD_CONCURRENCY)))
+    except ValueError:
+        concurrency = DEFAULT_CHUNK_UPLOAD_CONCURRENCY
+
+    return {
+        "chunk_size_bytes": max(1024 * 1024, chunk_size),
+        "concurrency": max(1, concurrency),
+    }
+
+
+@app.middleware("http")
+async def add_cors_headers_to_all_responses(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Max-Age"] = "600"
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    response = JSONResponse(status_code=422, content={"detail": exc.errors()})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
 
 # تهيئة قاعدة بيانات الذاكرة المشتركة وباص الرسائل
 DB_PATH = "shared_memory.db"
@@ -388,6 +439,11 @@ def run_agent_swarm_background(task_id: str, image_path: str):
         memory.update_task_status(task_id, "FAILED")
 
 # --- نقطة نهاية رفع الملفات المقطعة ---
+
+@app.get("/tasks/analyze/chunk/config", summary="Get safe chunk upload configuration")
+def chunk_upload_config():
+    return get_chunk_upload_config()
+
 
 @app.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
 async def upload_task_chunk(
