@@ -15,38 +15,12 @@ class LandSegmenterSAM:
         self.fail_fast = fail_fast
         self.use_fallback = use_fallback
         self.min_mask_region_area = min_mask_region_area
-        self.points_per_side = 16
+        self.points_per_side = 8
         self.pred_iou_thresh = 0.45
         self.stability_score_thresh = 0.30
-        
-        # محاولة تحميل نموذج SAM إذا كان موجوداً
-        print("🔄 محاولة تحميل نموذج SAM...")
-        if os.path.exists(model_path):
-            try:
-                import torch
-                from segment_anything import sam_model_registry
+        self._models_loaded = False
 
-                sam = sam_model_registry["vit_b"](checkpoint=model_path)
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                sam.to(device)
-                self.sam = sam
-
-                self.mask_generator = self._create_mask_generator(
-                    points_per_side=self.points_per_side,
-                    pred_iou_thresh=self.pred_iou_thresh,
-                    stability_score_thresh=self.stability_score_thresh,
-                    min_mask_region_area=self.min_mask_region_area,
-                )
-                self.use_sam = True
-                print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
-            except Exception as e:
-                msg = f"⚠️ لم يتم تحميل SAM: {e}"
-                if self.fail_fast:
-                    raise RuntimeError(msg)
-                else:
-                    print(msg)
-                    print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
-        else:
+        if not os.path.exists(model_path):
             msg = f"⚠️ لم يتم العثور على ملف النموذج: {model_path}"
             if self.fail_fast:
                 raise FileNotFoundError(msg)
@@ -54,13 +28,50 @@ class LandSegmenterSAM:
                 print(msg)
                 print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
 
-        # محاولة تحميل نموذج SegFormer للتصنيف الدلالي داخل أقنعة SAM
-        try:
-            self.semantic_segmenter = SegFormerSemanticSegmenter()
-            print("✔️ تم تحميل SegFormer بنجاح! سيتم استخدامه لتحسين تصنيف الأقنعة.")
-        except Exception as e:
-            print(f"⚠️ لم يتم تحميل SegFormer: {e}")
-            self.semantic_segmenter = None
+    def _ensure_models_loaded(self):
+        if self._models_loaded:
+            return
+
+        if self.sam is None and os.path.exists(self.model_path):
+            try:
+                self._load_sam_model()
+            except Exception as e:
+                msg = f"⚠️ لم يتم تحميل SAM: {e}"
+                if self.fail_fast:
+                    raise RuntimeError(msg)
+                print(msg)
+                print("ℹ️ سيتم استخدام الطريقة البديلة (الحدود)")
+
+        if self.semantic_segmenter is None:
+            try:
+                self._load_segformer_model()
+            except Exception as e:
+                print(f"⚠️ لم يتم تحميل SegFormer: {e}")
+                self.semantic_segmenter = None
+
+        self._models_loaded = True
+
+    def _load_sam_model(self):
+        import torch
+        from segment_anything import sam_model_registry
+
+        sam = sam_model_registry["vit_b"](checkpoint=self.model_path)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        sam.to(device)
+        self.sam = sam
+
+        self.mask_generator = self._create_mask_generator(
+            points_per_side=self.points_per_side,
+            pred_iou_thresh=self.pred_iou_thresh,
+            stability_score_thresh=self.stability_score_thresh,
+            min_mask_region_area=self.min_mask_region_area,
+        )
+        self.use_sam = True
+        print(f"✔️ تم تحميل نموذج SAM بنجاح على {device}!")
+
+    def _load_segformer_model(self):
+        self.semantic_segmenter = SegFormerSemanticSegmenter()
+        print("✔️ تم تحميل SegFormer بنجاح! سيتم استخدامه لتحسين تصنيف الأقنعة.")
 
     def _create_mask_generator(
         self,
@@ -120,6 +131,8 @@ class LandSegmenterSAM:
                 print(f"⚠️ فشل تحديث إعدادات SAM: {e}")
 
     def segment_image(self, image):
+        self._ensure_models_loaded()
+
         # فحوصات أولية للصورة (Fail-fast)
         if image is None:
             raise ValueError("Invalid image: None provided to segment_image")
@@ -418,10 +431,28 @@ class SegFormerSemanticSegmenter:
 
         self.torch = torch
         self.device = "cuda" if self.torch.cuda.is_available() else "cpu"
-        self.processor = AutoImageProcessor.from_pretrained(self.MODEL_NAME)
-        self.model = SegformerForSemanticSegmentation.from_pretrained(self.MODEL_NAME).to(self.device)
-        self.id2label = self.model.config.id2label
-        self.category_map = self._build_category_map()
+        self.processor = None
+        self.model = None
+        self.id2label = {}
+        self.category_map = {}
+        self._load_model()
+
+    def _load_model(self):
+        try:
+            from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
+
+            self.processor = AutoImageProcessor.from_pretrained(self.MODEL_NAME, local_files_only=False)
+            self.model = SegformerForSemanticSegmentation.from_pretrained(self.MODEL_NAME, local_files_only=False)
+            self.model.to(self.device)
+            self.model.eval()
+            self.id2label = self.model.config.id2label
+            self.category_map = self._build_category_map()
+        except Exception as e:
+            print(f"⚠️ فشل تحميل SegFormer عند الطلب: {e}")
+            self.processor = None
+            self.model = None
+            self.id2label = {}
+            self.category_map = {}
 
     def _build_category_map(self):
         category_map = {}
@@ -446,6 +477,10 @@ class SegFormerSemanticSegmenter:
     def segment_image(self, image: np.ndarray) -> np.ndarray:
         if image is None:
             raise ValueError("Invalid image provided to SegFormer semantic segmentation")
+        if self.model is None or self.processor is None:
+            self._load_model()
+            if self.model is None or self.processor is None:
+                raise RuntimeError("SegFormer model could not be loaded")
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         inputs = self.processor(images=image_rgb, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
