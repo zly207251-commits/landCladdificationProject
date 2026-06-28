@@ -336,7 +336,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       const maxLon = Math.max(topLeft.lon, bottomRight.lon);
       const minLat = Math.min(topLeft.lat, bottomRight.lat);
       const maxLat = Math.max(topLeft.lat, bottomRight.lat);
-      const base = API_CONFIG.baseURL || 'http://34.61.126.255:8000';
+      const base = API_CONFIG.baseURL || 'http://34.61.126.255:8080';
 
       if (taskId) {
         const downloadUrl = `${base}/tasks/${taskId}/crop?min_lon=${encodeURIComponent(minLon)}&min_lat=${encodeURIComponent(minLat)}&max_lon=${encodeURIComponent(maxLon)}&max_lat=${encodeURIComponent(maxLat)}`;
