@@ -1,6 +1,26 @@
 version: "3.9"
 
 services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: landcla_postgis
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=gis_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: landcla_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -11,10 +31,15 @@ services:
     environment:
       - PORT=8000
       - BACKEND_DB_PATH=/app/data/shared_memory.db
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/gis_db
+      - REDIS_URL=redis://redis:6379/0
       - BACKEND_UPLOAD_DIR=/app/temp_uploads
     volumes:
       - ./backend/data:/app/data
       - ./backend/temp_uploads:/app/temp_uploads
+    depends_on:
+      - db
+      - redis
     restart: unless-stopped
 
   frontend:
@@ -29,3 +54,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -516,14 +516,14 @@ class LandColorClassifier:
     def classify_mask(self, image: np.ndarray, mask: np.ndarray) -> str:
         """
         Classify a binary mask region in the image into a simple semantic label.
-        Returns one of: 'agricultural','arid','roads','buildings','water','unknown'
+        Returns one of: 'أرض', 'مبنى', 'شارع', 'جبل', 'مزرعة', 'وادي', 'وغيرها'
         """
         if mask is None or image is None:
-            return 'unknown'
+            return 'وغيرها'
         # ensure mask is binary 0/1
         bin_mask = (mask > 0).astype(np.uint8)
         if bin_mask.sum() == 0:
-            return 'unknown'
+            return 'وغيرها'
 
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         # compute mean HSV over masked pixels
@@ -531,7 +531,7 @@ class LandColorClassifier:
         s_vals = hsv[:, :, 1][bin_mask.astype(bool)]
         v_vals = hsv[:, :, 2][bin_mask.astype(bool)]
         if len(h_vals) == 0:
-            return 'unknown'
+            return 'وغيرها'
         mean_h = int(np.mean(h_vals))
         mean_s = int(np.mean(s_vals))
         mean_v = int(np.mean(v_vals))
@@ -547,24 +547,28 @@ class LandColorClassifier:
 
         # heuristics
         if 35 <= mean_h <= 85 and mean_s > 40 and mean_v > 40:
-            return 'agricultural'
+            if mean_s > 70:
+                return 'مزرعة'
+            return 'أرض'
         if 90 <= mean_h <= 140 and mean_s > 30 and mean_v > 20:
-            return 'water'
+            return 'وادي'
         if 10 <= mean_h <= 35 and mean_s > 30 and mean_v > 40:
-            return 'arid'
+            if mean_v < 100:
+                return 'جبل'
+            return 'أرض'
 
         if mean_s < 50 and mean_v > 180 and shape_ratio < 0.35 and not is_large_area:
-            return 'roads'
+            return 'شارع'
         if mean_s < 40 and mean_v > 160 and shape_ratio < 0.45 and not is_large_area:
-            return 'roads'
+            return 'شارع'
 
         if ((mean_h < 10 or mean_h > 160) and mean_v > 90 and mean_s > 20) or (mean_s < 35 and mean_v > 180 and not is_large_area):
-            return 'buildings'
+            return 'مبنى'
 
         if mean_s < 25 and mean_v > 140 and not is_large_area:
-            return 'roads'
+            return 'شارع'
 
-        return 'unknown'
+        return 'وغيرها'
 
     def _get_color_ratios(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -648,20 +652,20 @@ class SegFormerSemanticSegmenter:
         category_map = {}
         for idx, label in self.id2label.items():
             normalized = label.lower()
-            # نُحدد فقط تحويلات واضحة؛ أي فئة غير واضحة تُعطى 'unknown' لتجنّب التصنيف الخاطئ
             if any(token in normalized for token in ["road", "street", "highway", "runway", "bridge", "path", "sidewalk", "track"]):
-                category_map[int(idx)] = "roads"
+                category_map[int(idx)] = "شارع"
             elif any(token in normalized for token in ["building", "house", "tower", "wall", "garage", "factory", "church", "hut", "office", "hotel", "stadium"]):
-                category_map[int(idx)] = "buildings"
+                category_map[int(idx)] = "مبنى"
             elif any(token in normalized for token in ["river", "lake", "pond", "sea", "ocean", "water", "canal", "swamp", "wetland", "reservoir"]):
-                category_map[int(idx)] = "water"
-            elif any(token in normalized for token in ["grass", "field", "crop", "meadow", "farm", "farmland", "orchard", "vegetation"]):
-                category_map[int(idx)] = "agricultural"
+                category_map[int(idx)] = "وادي"
+            elif any(token in normalized for token in ["crop", "farm", "farmland", "orchard"]):
+                category_map[int(idx)] = "مزرعة"
+            elif any(token in normalized for token in ["grass", "field", "meadow", "vegetation"]):
+                category_map[int(idx)] = "أرض"
             elif any(token in normalized for token in ["sand", "dirt", "rock", "mountain", "desert", "gravel", "soil", "cliff"]):
-                category_map[int(idx)] = "arid"
+                category_map[int(idx)] = "جبل"
             else:
-                # اجعل الافتراضي محافظًا: نتركه 'unknown' بدلاً من تخمين خاطئ
-                category_map[int(idx)] = "unknown"
+                category_map[int(idx)] = "وغيرها"
         return category_map
 
     def segment_image(self, image: np.ndarray) -> np.ndarray:

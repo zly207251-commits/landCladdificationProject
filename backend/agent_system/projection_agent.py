@@ -161,12 +161,107 @@ class ProjectionAgent(BaseAgent):
             message_type="ACTION",
             content=f"معايير الإسقاط المعتمدة: مقياس الرسم = {pixel_scale} متر/بكسل، الإحداثي المرجعي = ({ref_lat}, {ref_lon})"
         )
+        # حساب حدود الصورة جغرافياً (Bounding Box) للتحقق من الكاش الجغرافي مسبق الصنع
+        height_px, width_px = image.shape[:2]
+        min_lon = ref_lon
+        max_lon = ref_lon
+        min_lat = ref_lat
+        max_lat = ref_lat
+        
+        if has_valid_geo_metadata:
+            bounds = geo_metadata.get('bounds', {})
+            min_lon = float(bounds.get('left', ref_lon))
+            min_lat = float(bounds.get('bottom', ref_lat))
+            max_lon = float(bounds.get('right', ref_lon))
+            max_lat = float(bounds.get('top', ref_lat))
+        else:
+            # حساب تقريبي للصورة العادية
+            lat_scale = 1.0 / 111111.0
+            lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
+            dx = width_px * pixel_scale
+            dy = height_px * pixel_scale
+            min_lon = min(ref_lon, ref_lon + dx * lon_scale)
+            max_lon = max(ref_lon, ref_lon + dx * lon_scale)
+            min_lat = min(ref_lat, ref_lat - dy * lat_scale)
+            max_lat = max(ref_lat, ref_lat - dy * lat_scale)
 
         self.message_bus.publish(
             task_id=task_id,
             sender=self.name,
             message_type="ACTION",
-            content="تشغيل نموذج SAM لاستخراج حدود قطع الأراضي من الصورة الجوية."
+            content=f"🔍 التحقق من كاش المعالم الجغرافية للمنطقة: ({min_lon:.5f}, {min_lat:.5f}) إلى ({max_lon:.5f}, {max_lat:.5f})"
+        )
+
+        # التحقق من وجود مضلعات محفوظة مسبقاً في هذا النطاق
+        cached_features = memory.check_cached_features(min_lon, min_lat, max_lon, max_lat)
+        
+        if cached_features and len(cached_features) > 0:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="SYSTEM",
+                content=f"🎯 تم العثور على {len(cached_features)} معلماً جغرافياً مجهزاً مسبقاً في كاش قاعدة البيانات. سيتم إعادة استخدامها مباشرة وتخطي تجزئة SAM."
+            )
+            
+            # نسخ المعالم الجغرافية للمهمة الحالية (لربطها بها)
+            for feat in cached_features:
+                import uuid
+                new_feat_id = f"feat_{uuid.uuid4().hex[:8]}"
+                
+                wkt_polygon = ""
+                wkt_centroid = ""
+                
+                if isinstance(feat.get('geom_geojson'), dict):
+                    coords = feat['geom_geojson']['coordinates'][0]
+                    wkt_polygon = f"POLYGON(({', '.join(f'{pt[0]} {pt[1]}' for pt in coords)}))"
+                else:
+                    wkt_polygon = feat.get('geom', "")
+
+                if isinstance(feat.get('centroid_geojson'), dict):
+                    coords = feat['centroid_geojson']['coordinates']
+                    wkt_centroid = f"POINT({coords[0]} {coords[1]})"
+                else:
+                    wkt_centroid = feat.get('centroid', "")
+                
+                # حفظ المعلم للمهمة الحالية
+                memory.add_spatial_feature(
+                    feature_id=new_feat_id,
+                    task_id=task_id,
+                    feature_type=feat['feature_type'],
+                    wkt_polygon=wkt_polygon,
+                    wkt_centroid=wkt_centroid,
+                    area_sqm=feat['area_sqm'],
+                    area_feddan=feat['area_feddan'],
+                    area_qirat=feat['area_qirat'],
+                    area_sahm=feat['area_sahm'],
+                    perimeter_meters=feat['perimeter_meters'],
+                    confidence=feat['confidence'],
+                    image_source=os.path.basename(image_path),
+                    spatial_relations=feat.get('spatial_relations'),
+                    geometric_features=feat.get('geometric_features'),
+                    analysis_results=feat.get('analysis_results'),
+                    country=feat.get('country', 'Yemen'),
+                    governorate=feat.get('governorate'),
+                    district=feat.get('district'),
+                    tile_id=feat.get('tile_id')
+                )
+            
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="COMPLETED",
+                content="اكتملت مهمة الإسقاط بنجاح عبر استرجاع المعالم من الكاش الجغرافي."
+            )
+            return {
+                "messages": state.get("messages", []) + [f"{self.name} has finished by loading cached features."],
+                "next_agent": "coordinator"
+            }
+
+        self.message_bus.publish(
+            task_id=task_id,
+            sender=self.name,
+            message_type="ACTION",
+            content="لم يتم العثور على كاش كافٍ للمنطقة. تشغيل نموذج SAM لاستخراج حدود قطع الأراضي من الصورة الجوية."
         )
 
         segments = self.segmenter.segment_image(image)
@@ -334,6 +429,13 @@ class ProjectionAgent(BaseAgent):
 
         # 4. معالجة وتخزين الكيانات المعتمدة وحساب السمات المتقدمة
         COLOR_MAP = {
+            'أرض': (34, 139, 34),
+            'مبنى': (0, 0, 255),
+            'شارع': (200, 200, 200),
+            'جبل': (19, 69, 139),
+            'مزرعة': (46, 204, 113),
+            'وادي': (255, 0, 0),
+            'وغيرها': (0, 255, 255),
             'agricultural': (34, 139, 34),
             'buildings': (0, 0, 255),
             'water': (255, 0, 0),

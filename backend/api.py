@@ -39,6 +39,11 @@ from land_classifier import LandSegmenterSAM
 import threading
 import time
 
+try:
+    from tasks import process_image_segmentation
+except ImportError:
+    process_image_segmentation = None
+
 app = FastAPI(
     title="نظام فريق وكلاء التحليل الجغرافي (Geo-AI Swarm)",
     description="واجهة برمجية للتحليل المساحي الذكي للصور الجوية وإسقاط المساحات بالفدان والقيراط والسهم.",
@@ -625,7 +630,19 @@ async def complete_task_chunk_upload(
     memory.create_task(task_id, temp_file_path, task_metadata)
     # mark task as ready to be processed
     memory.update_task_status(task_id, "PENDING")
-    background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    
+    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
+    celery_enqueued = False
+    if process_image_segmentation is not None:
+        try:
+            process_image_segmentation.delay(task_id, temp_file_path)
+            celery_enqueued = True
+            print(f"[API] Task {task_id} enqueued via Celery")
+        except Exception as e:
+            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
+    
+    if not celery_enqueued:
+        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
 
     return {
         "message": "تم تجميع الأجزاء وبدء المهمة بنجاح.",
@@ -710,7 +727,19 @@ async def analyze_remote_image(
     }
 
     memory.create_task(task_id, temp_file_path, task_metadata)
-    background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    
+    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
+    celery_enqueued = False
+    if process_image_segmentation is not None:
+        try:
+            process_image_segmentation.delay(task_id, temp_file_path)
+            celery_enqueued = True
+            print(f"[API] Task {task_id} enqueued via Celery")
+        except Exception as e:
+            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
+            
+    if not celery_enqueued:
+        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
 
     return {
         "message": "تم بدء استيراد الملف من الرابط وبدء المهمة.",
@@ -745,7 +774,19 @@ def retry_task_processing(task_id: str, background_tasks: BackgroundTasks):
 
     memory.log_message(task_id, 'system', 'RETRY', 'إعادة محاولة معالجة المهمة بعد الفشل.', {})
     memory.update_task_status(task_id, 'PENDING')
-    background_tasks.add_task(run_agent_swarm_background, task_id, image_path)
+    
+    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
+    celery_enqueued = False
+    if process_image_segmentation is not None:
+        try:
+            process_image_segmentation.delay(task_id, image_path)
+            celery_enqueued = True
+            print(f"[API] Task {task_id} enqueued via Celery (retry)")
+        except Exception as e:
+            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
+            
+    if not celery_enqueued:
+        background_tasks.add_task(run_agent_swarm_background, task_id, image_path)
 
     return {
         'task_id': task_id,
@@ -833,8 +874,18 @@ async def analyze_image_with_agents(
 
     memory.create_task(task_id, temp_file_path, task_metadata)
     
-    # 4. إطلاق تدفق الوكلاء كعملية في الخلفية لمنع تعليق الطلب
-    background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    # 4. محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
+    celery_enqueued = False
+    if process_image_segmentation is not None:
+        try:
+            process_image_segmentation.delay(task_id, temp_file_path)
+            celery_enqueued = True
+            print(f"[API] Task {task_id} enqueued via Celery")
+        except Exception as e:
+            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
+            
+    if not celery_enqueued:
+        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
     
     return {
         "message": "تم استلام الطلب وبدء تشغيل فريق الوكلاء بنجاح.",

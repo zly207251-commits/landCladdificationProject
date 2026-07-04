@@ -19,3 +19,6 @@ ezdxf
 simplekml
 mercantile
 pyproj
+psycopg2-binary
+celery
+redis
