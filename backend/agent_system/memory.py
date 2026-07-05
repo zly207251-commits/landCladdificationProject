@@ -1,7 +1,8 @@
 import json
 import os
+import traceback
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 # استيراد إعدادات ومخططات قاعدة البيانات
 from agent_system.db_config import (
@@ -51,25 +52,32 @@ class SharedMemory:
         if not os.path.isabs(db_path):
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
             db_path = os.path.join(project_root, db_path)
-        self.db_path = db_path
-        
-        # التأكد من إنشاء المجلد لـ SQLite إذا لم نكن نستخدم PostgreSQL
-        if not is_postgresql():
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            
+        self.db_path = os.path.abspath(db_path)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
     def _get_connection(self):
-        return get_db_connection(self.db_path)
-
-    def _qp(self, query: str) -> str:
-        return format_query(query)
+        # إنشاء اتصال مع قاعدة بيانات SQLite وتعيين row_factory لقراءة النتائج كقواميس
+        # enable a longer timeout and allow connections from worker threads
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            # enable WAL for better concurrency across threads/processes
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
+        return conn
 
     def _init_db(self):
         """تهيئة جداول قاعدة البيانات ومكونات PostGIS إذا لم تكن موجودة مسبقاً."""
         db_type = "postgres" if is_postgresql() else "sqlite"
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL;")
+            except Exception:
+                pass
             
             # تفعيل امتداد PostGIS في حال كنا نستخدم PostgreSQL
             if is_postgresql():
@@ -105,49 +113,87 @@ class SharedMemory:
 
             cursor.execute(TABLES_SQL["agent_messages"][db_type])
             
+            # 3. جدول رسائل الوكلاء (agent_messages): لتسجيل كل حدث أو رسالة تخاطب متبادلة
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    message_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE
+                )
+            """)
+            # 4. جدول حالة المربعات (task_tiles): لحفظ حالة كل جزء وتوفير إمكانية الاستئناف
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS task_tiles (
+                    tile_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    tile_row INTEGER NOT NULL,
+                    tile_col INTEGER NOT NULL,
+                    y_start INTEGER NOT NULL,
+                    y_end INTEGER NOT NULL,
+                    x_start INTEGER NOT NULL,
+                    x_end INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(task_id, tile_row, tile_col),
+                    FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE
+                )
+            """)
             conn.commit()
 
     # --- عمليات إدارة المهام (Tasks) ---
     
     def create_task(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """إنشاء مهمة تحليل جديدة في قاعدة البيانات مع دعم التصنيف الإداري والبلاطات."""
-        is_pg = is_postgresql()
-        meta = metadata or {}
-        country = meta.get("country", "Yemen")
-        governorate = meta.get("governorate")
-        district = meta.get("district")
-        tile_id = meta.get("tile_id")
-        metadata_val = json.dumps(meta) if not is_pg else meta
+        """إنشاء مهمة تحليل جديدة في قاعدة البيانات."""
+        return self.ensure_task_record(task_id, image_path, metadata=metadata, status="PENDING")
+
+    def ensure_task_record(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None, status: str = "PENDING") -> bool:
+        """تأمين وجود سجل المهمة، وإنشاؤه أو تحديثه بطريقة آمنة."""
+        metadata_str = json.dumps(metadata or {})
+        now = datetime.now().isoformat()
         try:
             with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    self._qp("INSERT INTO tasks (task_id, image_path, status, metadata, country, governorate, district, tile_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"),
-                    (task_id, image_path, "PENDING", metadata_val, country, governorate, district, tile_id)
+                conn.execute(
+                    """
+                    INSERT INTO tasks (task_id, image_path, status, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        image_path = excluded.image_path,
+                        status = excluded.status,
+                        metadata = excluded.metadata,
+                        updated_at = excluded.updated_at
+                    """,
+                    (task_id, image_path, status, metadata_str, now, now)
                 )
                 conn.commit()
-                print(f"[SharedMemory] create_task: inserted {task_id}")
+                print(f"[SharedMemory] ensure_task_record: {task_id} -> {self.db_path} ({status})")
             return True
         except Exception as e:
-            print(f"[SharedMemory] create_task error: {e}")
+            print(f"[SharedMemory] ensure_task_record ERROR for {task_id}: {e}")
+            traceback.print_exc()
             return False
 
     def update_task_status(self, task_id: str, status: str) -> bool:
         """تحديث حالة المهمة الحالية."""
         now = datetime.now().isoformat()
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    self._qp("UPDATE tasks SET status = %s, updated_at = %s WHERE task_id = %s"),
-                    (status, now, task_id)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
+                (status, now, task_id)
+            )
+            if cursor.rowcount == 0:
+                conn.execute(
+                    "INSERT INTO tasks (task_id, image_path, status, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (task_id, None, status, "{}", now, now)
                 )
-                conn.commit()
-                rowcount = cursor.rowcount if hasattr(cursor, 'rowcount') else 0
-                return rowcount > 0
-        except Exception as e:
-            print(f"[SharedMemory] update_task_status error: {e}")
-            return False
+            conn.commit()
+            print(f"[SharedMemory] update_task_status: {task_id} -> {status} in {self.db_path}")
+            return True
 
     def update_task_processed_image(self, task_id: str, processed_image_path: str) -> bool:
         """حفظ مسار الصورة النهائية المعالجة في المهمة."""
@@ -168,22 +214,15 @@ class SharedMemory:
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """الاستعلام عن بيانات مهمة معينة باستخدام معرفها."""
-        is_pg = is_postgresql()
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor(cursor_factory=RealDictCursor) if is_pg else conn.cursor()
-                cursor.execute(
-                    self._qp("SELECT * FROM tasks WHERE task_id = %s"),
-                    (task_id,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    data = dict(row)
-                    if isinstance(data.get('metadata'), str):
-                        data['metadata'] = json.loads(data['metadata']) if data['metadata'] else {}
-                    return data
-        except Exception as e:
-            print(f"[SharedMemory] get_task error: {e}")
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if row:
+                data = dict(row)
+                data['metadata'] = json.loads(data['metadata']) if data['metadata'] else {}
+                print(f"[SharedMemory] get_task: found {task_id} in {self.db_path}")
+                return data
+            else:
+                print(f"[SharedMemory] get_task: NOT FOUND {task_id} in {self.db_path}")
         return None
 
     def get_tasks(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -533,3 +572,42 @@ class SharedMemory:
         except Exception as e:
             print(f"[SharedMemory] get_messages error: {e}")
         return messages
+
+    # --- عمليات إدارة تقسيم الصور (Tiling) ---
+    
+    def init_task_tiles(self, task_id: str, tiles_list: List[Tuple[int, int, int, int, int, int]]) -> None:
+        """
+        تسجيل جميع الأجزاء (Tiles) لمهمة ما في قاعدة البيانات إذا لم تكن مسجلة مسبقاً.
+        tiles_list: قائمة بـ (row, col, y_start, y_end, x_start, x_end)
+        """
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            # نتجاهل الأجزاء الموجودة مسبقاً (لتجاوز المشاكل عند الاستئناف)
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO task_tiles (task_id, tile_row, tile_col, y_start, y_end, x_start, x_end, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                """,
+                [(task_id, t[0], t[1], t[2], t[3], t[4], t[5], now, now) for t in tiles_list]
+            )
+            conn.commit()
+            
+    def get_pending_tiles(self, task_id: str) -> List[Dict[str, Any]]:
+        """جلب الأجزاء التي لم تكتمل بعد."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM task_tiles WHERE task_id = ? AND status != 'COMPLETED' ORDER BY tile_row ASC, tile_col ASC", 
+                (task_id,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_tile_status(self, task_id: str, tile_row: int, tile_col: int, status: str) -> bool:
+        """تحديث حالة مربع معين (مثلاً PENDING -> COMPLETED)."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE task_tiles SET status = ?, updated_at = ? WHERE task_id = ? AND tile_row = ? AND tile_col = ?",
+                (status, now, task_id, tile_row, tile_col)
+            )
+            conn.commit()
+            return cursor.rowcount > 0

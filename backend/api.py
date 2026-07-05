@@ -14,6 +14,7 @@ import json
 import mimetypes
 import importlib.util
 import re
+from threading import Thread
 from pydantic import BaseModel
 from PIL import Image
 import requests
@@ -36,13 +37,7 @@ from agent_system.memory import SharedMemory
 from agent_system.messaging import MessageBus
 from agent_system.graph import create_swarm_graph
 from land_classifier import LandSegmenterSAM
-import threading
-import time
-
-try:
-    from tasks import process_image_segmentation
-except ImportError:
-    process_image_segmentation = None
+from storage_paths import resolve_storage_path, resolve_storage_dir
 
 app = FastAPI(
     title="نظام فريق وكلاء التحليل الجغرافي (Geo-AI Swarm)",
@@ -112,9 +107,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # تهيئة قاعدة بيانات الذاكرة المشتركة وباص الرسائل
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.getenv("BACKEND_DB_PATH", os.path.join(BASE_DIR, "shared_memory.db"))
-UPLOAD_DIR = os.getenv("BACKEND_UPLOAD_DIR", os.path.join(BASE_DIR, "temp_uploads"))
-CHUNK_UPLOAD_DIR = os.getenv("BACKEND_CHUNK_UPLOAD_DIR", os.path.join(UPLOAD_DIR, "chunks"))
+DB_PATH = resolve_storage_path(BASE_DIR, "BACKEND_DB_PATH", "shared_memory.db")
+UPLOAD_DIR = resolve_storage_dir(BASE_DIR, "BACKEND_UPLOAD_DIR", "temp_uploads")
+CHUNK_UPLOAD_DIR = resolve_storage_dir(BASE_DIR, "BACKEND_CHUNK_UPLOAD_DIR", os.path.join("temp_uploads", "chunks"))
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(CHUNK_UPLOAD_DIR, exist_ok=True)
@@ -179,11 +174,10 @@ def get_chunk_dir(upload_id: str) -> str:
 
 # Diagnostic info: print DB path used by SharedMemory to help debug missing tasks
 print(f"[startup] BASE_DIR={BASE_DIR}")
-print(f"[startup] BACKEND_DB_PATH={os.getenv('BACKEND_DB_PATH', '<unset>')}")
-print(f"[startup] BACKEND_UPLOAD_DIR={os.getenv('BACKEND_UPLOAD_DIR', '<unset>')}")
 try:
     print(f"[startup] DB_PATH configured: {DB_PATH}")
     print(f"[startup] SharedMemory.db_path: {getattr(memory, 'db_path', '<missing>')}")
+    print(f"[startup] DB exists at startup: {os.path.exists(DB_PATH)}")
 except Exception:
     pass
 
@@ -439,20 +433,39 @@ def get_geotiff_metadata(path: str):
         return None
 
 
+def launch_background_processing(task_id: str, image_path: str):
+    """Start background processing in a real worker thread so task execution is not lost after the request completes."""
+    worker = Thread(
+        target=run_agent_swarm_background,
+        args=(task_id, image_path),
+        daemon=True,
+        name=f"agent-bg-{task_id}",
+    )
+    worker.start()
+    return worker
+
+
 def run_agent_swarm_background(task_id: str, image_path: str):
     """دالة تُنفذ في الخلفية لتشغيل تدفق الوكلاء عبر LangGraph دون إيقاف الواجهة."""
+    import traceback as tb
+    print(f"[backend] starting background processing for {task_id} in {DB_PATH}")
+    
+    # Debug: Check if task exists before starting
+    existing_task = memory.get_task(task_id)
+    print(f"[backend] existing_task at start: {existing_task}")
+    
     try:
-        # تأكد من تحميل segmenter (ينتظر لفترة ثم يجرب synchronous كنسخة احتياطية)
-        seg = ensure_segmenter()
-        if seg is None:
-            message_bus.publish(
-                task_id=task_id,
-                sender="system",
-                message_type="ERROR",
-                content=f"لم يتوفر نموذج SAM لتحليل المهمة ({task_id})."
-            )
-            memory.update_task_status(task_id, "FAILED")
-            return
+        memory.ensure_task_record(task_id, image_path, metadata={"source": "background_worker"}, status="RUNNING")
+        
+        # Debug: Verify after ensure
+        verify = memory.get_task(task_id)
+        print(f"[backend] verify after ensure_task_record: {verify}")
+        
+        memory.update_task_status(task_id, "RUNNING")
+        
+        # Debug: Verify after status update
+        verify2 = memory.get_task(task_id)
+        print(f"[backend] verify after update_task_status: {verify2}")
         # بناء وتشغيل الرسم البياني للوكلاء
         compiled_graph = create_swarm_graph(memory, message_bus, get_segmenter())
         initial_state = {
@@ -465,13 +478,26 @@ def run_agent_swarm_background(task_id: str, image_path: str):
         compiled_graph.invoke(initial_state)
     except Exception as e:
         # توثيق الفشل في باص الرسائل وتحديث الحالة
-        message_bus.publish(
-            task_id=task_id,
-            sender="system",
-            message_type="ERROR",
-            content=f"حدث خطأ أثناء تشغيل تدفق الوكلاء: {str(e)}"
-        )
-        memory.update_task_status(task_id, "FAILED")
+        print(f"[backend] EXCEPTION in background processing: {str(e)}")
+        tb.print_exc()
+        
+        try:
+            message_bus.publish(
+                task_id=task_id,
+                sender="system",
+                message_type="ERROR",
+                content=f"حدث خطأ أثناء تشغيل تدفق الوكلاء: {str(e)}"
+            )
+        except Exception as pub_err:
+            print(f"[backend] Failed to publish error message: {pub_err}")
+        
+        try:
+            memory.ensure_task_record(task_id, image_path, metadata={"failure_reason": str(e)[:200]}, status="FAILED")
+            memory.update_task_status(task_id, "FAILED")
+        except Exception as mem_err:
+            print(f"[backend] Failed to update task status: {mem_err}")
+        
+        print(f"[backend] background processing failed for {task_id}: {e}")
 
 # --- نقطة نهاية رفع الملفات المقطعة ---
 
@@ -627,22 +653,21 @@ async def complete_task_chunk_upload(
         if key not in ["filename", "total_chunks"]
     }
 
-    memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] complete_task_chunk_upload request task_id={task_id} upload_id={upload_id} db={getattr(memory, 'db_path', '<no-db>')}")
+    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] complete_task_chunk_upload create_task returned {created} for {task_id}")
+    
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+    
+    if not created:
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
+
     # mark task as ready to be processed
     memory.update_task_status(task_id, "PENDING")
-    
-    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
-    celery_enqueued = False
-    if process_image_segmentation is not None:
-        try:
-            process_image_segmentation.delay(task_id, temp_file_path)
-            celery_enqueued = True
-            print(f"[API] Task {task_id} enqueued via Celery")
-        except Exception as e:
-            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
-    
-    if not celery_enqueued:
-        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    launch_background_processing(task_id, temp_file_path)
 
     return {
         "message": "تم تجميع الأجزاء وبدء المهمة بنجاح.",
@@ -726,20 +751,19 @@ async def analyze_remote_image(
         "sam_stability_score_thresh": sam_stability_score_thresh,
     }
 
-    memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] analyze_remote_image request task_id={task_id} url={remote_url} db={getattr(memory, 'db_path', '<no-db>')}")
+    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] analyze_remote_image create_task returned {created} for {task_id}")
     
-    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
-    celery_enqueued = False
-    if process_image_segmentation is not None:
-        try:
-            process_image_segmentation.delay(task_id, temp_file_path)
-            celery_enqueued = True
-            print(f"[API] Task {task_id} enqueued via Celery")
-        except Exception as e:
-            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
-            
-    if not celery_enqueued:
-        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+    
+    if not created:
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
+
+    launch_background_processing(task_id, temp_file_path)
 
     return {
         "message": "تم بدء استيراد الملف من الرابط وبدء المهمة.",
@@ -774,24 +798,23 @@ def retry_task_processing(task_id: str, background_tasks: BackgroundTasks):
 
     memory.log_message(task_id, 'system', 'RETRY', 'إعادة محاولة معالجة المهمة بعد الفشل.', {})
     memory.update_task_status(task_id, 'PENDING')
-    
-    # محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
-    celery_enqueued = False
-    if process_image_segmentation is not None:
-        try:
-            process_image_segmentation.delay(task_id, image_path)
-            celery_enqueued = True
-            print(f"[API] Task {task_id} enqueued via Celery (retry)")
-        except Exception as e:
-            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
-            
-    if not celery_enqueued:
-        background_tasks.add_task(run_agent_swarm_background, task_id, image_path)
+    launch_background_processing(task_id, image_path)
 
     return {
         'task_id': task_id,
         'status': 'PENDING',
         'message': 'تمت إعادة محاولة معالجة المهمة بنجاح.'
+    }
+
+
+@app.get('/tasks/debug', summary='Debug current task storage')
+def debug_task_storage(limit: int = 20):
+    print(f"[api] debug_task_storage request db={getattr(memory, 'db_path', '<no-db>')} limit={limit}")
+    tasks = memory.get_tasks(limit=limit)
+    return {
+        "db_path": memory.db_path,
+        "task_count": len(tasks),
+        "tasks": tasks
     }
 
 @app.post("/tasks/analyze", summary="1. بدء تحليل الصورة عبر فريق الوكلاء")
@@ -806,7 +829,7 @@ async def analyze_image_with_agents(
     ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
     sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
-    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_points_per_side: int = Form(8, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
     sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
     sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
 ):
@@ -872,20 +895,20 @@ async def analyze_image_with_agents(
         if geo_metadata:
             task_metadata['geo_metadata'] = geo_metadata
 
-    memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] analyze_image_with_agents request task_id={task_id} file={file.filename} db={getattr(memory, 'db_path', '<no-db>')}")
+    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] analyze_image_with_agents create_task returned {created} for {task_id}")
     
-    # 4. محاولة تشغيل المهمة الموزعة عبر Celery أولاً، والتراجع لـ BackgroundTasks كنسخة احتياطية
-    celery_enqueued = False
-    if process_image_segmentation is not None:
-        try:
-            process_image_segmentation.delay(task_id, temp_file_path)
-            celery_enqueued = True
-            print(f"[API] Task {task_id} enqueued via Celery")
-        except Exception as e:
-            print(f"⚠️ Celery queuing failed: {e}. Falling back to local BackgroundTasks...")
-            
-    if not celery_enqueued:
-        background_tasks.add_task(run_agent_swarm_background, task_id, temp_file_path)
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+    
+    if not created:
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
+    
+    # 4. إطلاق تدفق الوكلاء كعملية في الخلفية لمنع تعليق الطلب
+    launch_background_processing(task_id, temp_file_path)
     
     return {
         "message": "تم استلام الطلب وبدء تشغيل فريق الوكلاء بنجاح.",
@@ -898,15 +921,184 @@ def get_task_status(task_id: str):
     """
     Get the status of a task to check if it is pending, in progress, completed, or failed.
     الاستعلام عن حالة المهمة لمعرفة ما إذا كانت معلقة، قيد التنفيذ، مكتملة، أو فشلت.
+    يتضمن أيضاً إحصائيات تقدم القطع (tiles).
     """
-    task = memory.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found - المهمة المطلوبة غير موجودة.")
-    return {
-        "task_id": task_id,
-        "status": task.get("status"),
-        "updated_at": task.get("updated_at")
-    }
+    import traceback
+    print(f"[api] get_task_status request for task_id={task_id} db={getattr(memory, 'db_path', '<no-db>')}")
+
+    try:
+        task = memory.get_task(task_id)
+        if not task:
+            print(f"[SharedMemory] get_task: NOT FOUND {task_id} in {getattr(memory, 'db_path', '<no-db>')}")
+            return {
+                "task_id": task_id,
+                "status": "NOT_FOUND",
+                "exists": False,
+                "message": "المهمة غير موجودة في قاعدة البيانات"
+            }
+
+        print(f"[SharedMemory] get_task: found {task_id} in {getattr(memory, 'db_path', '<no-db>')}")
+
+        # إحصائيات تقدم القطع (tiles)
+        tile_stats = {"total": 0, "completed": 0, "failed": 0, "pending": 0}
+        try:
+            import sqlite3
+            db_path = getattr(memory, 'db_path', None)
+            if db_path:
+                with sqlite3.connect(db_path) as conn:
+                    total = conn.execute(
+                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=?", (task_id,)
+                    ).fetchone()[0]
+                    completed = conn.execute(
+                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=? AND status='COMPLETED'", (task_id,)
+                    ).fetchone()[0]
+                    failed = conn.execute(
+                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=? AND status='FAILED'", (task_id,)
+                    ).fetchone()[0]
+                    tile_stats = {
+                        "total": total,
+                        "completed": completed,
+                        "failed": failed,
+                        "pending": total - completed - failed
+                    }
+        except Exception as tile_err:
+            print(f"[api] tile_stats error: {tile_err}")
+
+        # إحصائيات الذاكرة العشوائية (RAM)
+        memory_info = {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "process_rss_gb": 0.0, "percent": 0.0}
+        try:
+            import psutil
+            import os
+            vm = psutil.virtual_memory()
+            process = psutil.Process(os.getpid())
+            memory_info = {
+                "total_gb": round(vm.total / (1024**3), 2),
+                "used_gb": round(vm.used / (1024**3), 2),
+                "free_gb": round(vm.available / (1024**3), 2),
+                "process_rss_gb": round(process.memory_info().rss / (1024**3), 2),
+                "percent": vm.percent
+            }
+        except Exception as mem_err:
+            print(f"[api] memory_info error: {mem_err}")
+            # محاولة قراءة مبسطة من ملف النظام في Linux كبديل
+            try:
+                with open('/proc/self/status') as f:
+                    for line in f:
+                        if line.startswith('VmRSS:'):
+                            parts = line.split()
+                            rss_gb = round(float(parts[1]) / (1024 * 1024), 2)
+                            memory_info["process_rss_gb"] = rss_gb
+                            break
+            except Exception:
+                pass
+
+        return {
+            "task_id": task_id,
+            "status": task.get("status", "UNKNOWN"),
+            "exists": True,
+            "created_at": task.get("created_at"),
+            "updated_at": task.get("updated_at"),
+            "tile_stats": tile_stats,
+            "memory_info": memory_info
+        }
+    except Exception as e:
+        error_msg = f"Error in get_task_status: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
+        return {
+            "task_id": task_id,
+            "status": "ERROR",
+            "exists": False,
+            "message": error_msg
+        }
+
+
+# ============================================================
+# 🔍 endpoint جديد: جلب سجلات وكلاء المعالجة بالتفصيل
+# ============================================================
+@app.get("/tasks/{task_id}/logs", summary="جلب سجلات وكلاء المعالجة بالتفصيل")
+def get_task_logs(task_id: str):
+    """
+    يُعيد جميع رسائل وكلاء المعالجة خطوة بخطوة.
+    يُستخدم لتشخيص مكان توقف المعالجة أو حدوث خطأ.
+    """
+    import traceback
+    print(f"[api] get_task_logs request for task_id={task_id} db={getattr(memory, 'db_path', '<no-db>')}")
+    
+    try:
+        # التحقق من وجود المهمة
+        task = memory.get_task(task_id)
+        if not task:
+            return {
+                "task_id": task_id,
+                "exists": False,
+                "message": "المهمة غير موجودة في قاعدة البيانات",
+                "logs": []
+            }
+        
+        # جلب جميع رسائل وكلاء المعالجة
+        messages = memory.get_messages(task_id)
+    
+    # تحليل السجلات وتصنيفها
+        log_summary = {
+            "total_messages": len(messages),
+            "by_type": {},
+            "by_agent": {},
+            "first_message": None,
+            "last_message": None
+        }
+        
+        for msg in messages:
+            #统计حسب النوع
+            msg_type = msg.get("message_type", "UNKNOWN")
+            log_summary["by_type"][msg_type] = log_summary["by_type"].get(msg_type, 0) + 1
+            
+            #统计حسب الوكيل
+            sender = msg.get("sender", "unknown")
+            log_summary["by_agent"][sender] = log_summary["by_agent"].get(sender, 0) + 1
+        
+        if messages:
+            log_summary["first_message"] = {
+                "created_at": messages[0].get("created_at"),
+                "sender": messages[0].get("sender"),
+                "message_type": messages[0].get("message_type"),
+                "content": messages[0].get("content", "")[:100]
+            }
+            log_summary["last_message"] = {
+                "created_at": messages[-1].get("created_at"),
+                "sender": messages[-1].get("sender"),
+                "message_type": messages[-1].get("message_type"),
+                "content": messages[-1].get("content", "")[:100]
+            }
+        
+        return {
+            "task_id": task_id,
+            "exists": True,
+            "task_status": task.get("status"),
+            "log_summary": log_summary,
+            "logs": [
+                {
+                    "id": msg.get("message_id"),
+                    "created_at": msg.get("created_at"),
+                    "sender": msg.get("sender"),
+                    "type": msg.get("message_type"),
+                    "content": msg.get("content"),
+                    "payload": msg.get("payload", {})
+                }
+                for msg in messages
+            ]
+        }
+    except Exception as e:
+        error_msg = f"Error in get_task_logs: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
+        return {
+            "task_id": task_id,
+            "exists": False,
+            "message": f"خطأ في جلب السجلات: {str(e)}",
+            "logs": []
+        }
+
 
 @app.get("/tasks/{task_id}/report", summary="3. جلب التقرير المساحي النهائي والطبقات")
 def get_task_report(task_id: str):

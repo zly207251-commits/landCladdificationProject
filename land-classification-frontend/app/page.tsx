@@ -1,27 +1,73 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { API_CONFIG } from '@/app/lib/map-config';
 import UploadPortal from "./components/UploadPortal";
 import ProcessingDashboard from "./components/ProcessingDashboard";
 
 type AppState = 'upload' | 'processing' | 'results';
 
+const STORAGE_KEY = 'land_classification_job_id';
+
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('upload');
   const [jobId, setJobId] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(true);
   const router = useRouter();
+
+  // استعادة jobId من localStorage عند تحميل الصفحة
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const storedJobId = window.localStorage.getItem(STORAGE_KEY);
+    if (storedJobId) {
+      // استخدام baseURL من API_CONFIG للوصول للخادم
+      const statusEndpoint = `${API_CONFIG.baseURL}/tasks/${storedJobId}/status`;
+      fetch(statusEndpoint)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status && data.status !== 'NOT_FOUND') {
+            // المهمة موجودة، استئناف المراقبة
+            setJobId(storedJobId);
+            setAppState('processing');
+          } else {
+            // المهمة لم تعد موجودة، تنظيف التخزين
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
+        })
+        .catch(() => {
+          // خطأ في الاتصال، تنظيف التخزين
+          window.localStorage.removeItem(STORAGE_KEY);
+        })
+        .finally(() => {
+          setIsRestoring(false);
+        });
+    } else {
+      setIsRestoring(false);
+    }
+  }, []);
 
   // معالجة اكتمال الرفع
   const handleUploadComplete = (fileInfo: any) => {
     const tid = fileInfo?.task_id || fileInfo?.taskId || fileInfo?.fileId;
-    setJobId(tid || null);
-    setAppState('processing');
+    if (tid) {
+      // حفظ jobId في localStorage للاستئناف بعد إعادة تحميل الصفحة
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STORAGE_KEY, tid);
+      }
+      setJobId(tid);
+      setAppState('processing');
+    }
   };
 
   // معالجة اكتمال المعالجة
   const handleProcessingComplete = () => {
+    // تنظيف التخزين بعد اكتمال المهمة
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
     // بعد اكتمال المعالجة، ننتقل إلى صفحة النتائج مع task_id
     if (jobId) {
       router.push(`/results?task_id=${jobId}`);
@@ -31,9 +77,27 @@ export default function Home() {
   };
 
   const handleBackToHome = () => {
+    // تنظيف التخزين عند العودة للرئيسية
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
     setJobId(null);
     setAppState('upload');
   };
+
+  // عرض شاشة تحميل أثناء استعادة الحالة
+  if (isRestoring) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-4 md:p-8 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto mb-4">
+            <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600"></div>
+          </div>
+          <p className="text-gray-600 text-lg">جاري استعادة حالة المهمة...</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-4 md:p-8">
