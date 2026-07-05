@@ -1,5 +1,5 @@
 opencv-python-headless
-numpy
+numpy==1.26.4
 matplotlib
 Pillow
 torch
@@ -19,3 +19,4 @@ ezdxf
 simplekml
 mercantile
 pyproj
+psutil

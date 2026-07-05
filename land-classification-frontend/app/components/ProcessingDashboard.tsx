@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_CONFIG, PROCESSING_STAGES } from '@/app/lib/map-config';
+import TileProgress from './TileProgress';
 
 interface ProcessingDashboardProps {
   jobId?: string;
@@ -21,7 +22,40 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
   const [retryError, setRetryError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
-  const [estimatedTime, setEstimatedTime] = useState<number>(120); // 120 ثانية من PDF
+  const [estimatedTime, setEstimatedTime] = useState<number>(120);
+  
+  // حالة سجلات الوكلاء
+  const [logs, setLogs] = useState<any[]>([]);
+  const [logsSummary, setLogsSummary] = useState<any>(null);
+  const [showLogs, setShowLogs] = useState<boolean>(false);
+  const [logsLoading, setLogsLoading] = useState<boolean>(false);
+
+  // جلب سجلات الوكلاء من الخادم
+  const fetchLogs = async (taskId: string) => {
+    setLogsLoading(true);
+    try {
+      const endpoint = `${API_CONFIG.baseURL}/tasks/${taskId}/logs`;
+      const resp = await fetch(endpoint, { cache: 'no-store' });
+      if (resp.ok) {
+        const data = await resp.json();
+        setLogs(data.logs || []);
+        setLogsSummary(data.log_summary);
+      }
+    } catch (err) {
+      console.warn('fetchLogs error', err);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  // جلب السجلات كل 5 ثوانٍ أثناء المعالجة
+  useEffect(() => {
+    if (!jobId || !isProcessing) return;
+    
+    fetchLogs(jobId);
+    const interval = setInterval(() => fetchLogs(jobId), 5000);
+    return () => clearInterval(interval);
+  }, [jobId, isProcessing]);
 
   // تهيئة مراحل المعالجة
   useEffect(() => {
@@ -78,6 +112,14 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           setRetryError(null);
           setRetryMessage('المهمة فشلت على الخادم. يمكنك إعادة المحاولة دون إعادة الرفع.');
           if (onError) onError('المهمة فشلت في الخادم');
+          stopped = true;
+          return;
+        }
+
+        // إيقاف الاستعلام عند عدم وجود المهمة
+        if (data.status === 'NOT_FOUND') {
+          setPollError('المهمة غير موجودة في قاعدة البيانات.');
+          setIsProcessing(false);
           stopped = true;
           return;
         }
@@ -201,6 +243,11 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           <span>الوقت المتبقي: {formatTime(Math.max(0, estimatedTime - processingTime))}</span>
         </div>
       </div>
+
+      {/* تقدم معالجة القطع */}
+      {jobId && (
+        <TileProgress taskId={jobId} isProcessing={isProcessing} />
+      )}
 
       {/* مراحل المعالجة */}
       <div className="mb-8">
@@ -364,6 +411,75 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
           >
             {isRetrying ? '⏳ جاري إعادة المحاولة...' : '🔁 إعادة محاولة المعالجة'}
           </button>
+        </div>
+      )}
+
+      {/* 📋 سجلات الوكلاء بالتفصيل */}
+      {jobId && (
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <button
+            onClick={() => {
+              setShowLogs(!showLogs);
+              if (!showLogs) fetchLogs(jobId);
+            }}
+            className="w-full flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📋</span>
+              <div className="text-right">
+                <h3 className="font-semibold text-purple-800">سجلات وكلاء المعالجة</h3>
+                <p className="text-sm text-purple-600">
+                  {logsSummary?.total_messages || 0} رسالة • آخر: {logsSummary?.last_message?.sender || '-'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {logsLoading && <span className="text-purple-600">جاري التحميل...</span>}
+              <span className={`transform transition-transform ${showLogs ? 'rotate-180' : ''}`}>▼</span>
+            </div>
+          </button>
+
+          {showLogs && (
+            <div className="mt-4 p-4 bg-gray-900 rounded-lg max-h-96 overflow-y-auto">
+              {logs.length === 0 ? (
+                <p className="text-gray-400 text-center">لا توجد سجلات بعد</p>
+              ) : (
+                <div className="space-y-2 font-mono text-sm">
+                  {logs.map((log: any, index: number) => (
+                    <div
+                      key={log.id || index}
+                      className={`p-2 rounded border-l-4 ${
+                        log.type === 'ERROR' ? 'border-red-500 bg-red-900/30' :
+                        log.type === 'WARNING' ? 'border-yellow-500 bg-yellow-900/30' :
+                        log.type === 'COMPLETED' ? 'border-green-500 bg-green-900/30' :
+                        'border-blue-500 bg-blue-900/30'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <span className="text-gray-400 text-xs">
+                          {new Date(log.created_at).toLocaleTimeString('ar-SA')}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                          log.type === 'ERROR' ? 'bg-red-600 text-white' :
+                          log.type === 'WARNING' ? 'bg-yellow-600 text-white' :
+                          log.type === 'COMPLETED' ? 'bg-green-600 text-white' :
+                          'bg-blue-600 text-white'
+                        }`}>
+                          {log.sender}
+                        </span>
+                      </div>
+                      <p className="text-gray-200 mt-1">{log.content}</p>
+                      {log.payload && Object.keys(log.payload).length > 0 && (
+                        <pre className="text-gray-500 text-xs mt-1 overflow-x-auto">
+                          {JSON.stringify(log.payload, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
