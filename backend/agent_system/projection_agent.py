@@ -61,7 +61,8 @@ class ProjectionAgent(BaseAgent):
                 pixel_scale=pixel_scale,
                 ref_lat=ref_lat,
                 ref_lon=ref_lon,
-                message_bus=self.message_bus
+                message_bus=self.message_bus,
+                use_geo_metadata=use_geo_metadata
             )
             self.message_bus.publish(
                 task_id=task_id,
@@ -69,6 +70,7 @@ class ProjectionAgent(BaseAgent):
                 message_type="COMPLETED",
                 content="اكتملت معالجة الصورة الضخمة (التقطيع)."
             )
+            self._generate_processed_preview(image_path, task_id, memory)
             return {
                 "messages": state.get("messages", []) + [f"{self.name} finished tiling extraction."],
                 "next_agent": "coordinator"
@@ -89,6 +91,8 @@ class ProjectionAgent(BaseAgent):
                         image = bands
                     image = np.asarray(image, dtype=np.uint8)
                     if image.ndim == 2:
+                        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+                    elif image.shape[2] == 1:
                         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
                     elif image.shape[2] == 4:
                         image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
@@ -114,8 +118,23 @@ class ProjectionAgent(BaseAgent):
                 task_meta['geo_metadata'] = geo_metadata
 
         transform = None
+        crs_str = None
+        transformer = None
         if isinstance(geo_metadata, dict):
             transform = geo_metadata.get('transform')
+            crs_str = geo_metadata.get('crs')
+            if crs_str and crs_str != 'EPSG:4326':
+                try:
+                    from pyproj import Transformer
+                    transformer = Transformer.from_crs(crs_str, 'EPSG:4326', always_xy=True)
+                    self.message_bus.publish(
+                        task_id=task_id,
+                        sender=self.name,
+                        message_type="INFO",
+                        content=f"تم تهيئة المحول الجغرافي من {crs_str} إلى EPSG:4326"
+                    )
+                except Exception as e:
+                    print(f"[ProjectionAgent] Error creating Transformer: {e}")
 
         segments = self.segmenter.segment_image(image)
         if not segments:
@@ -142,6 +161,8 @@ class ProjectionAgent(BaseAgent):
                     
                     if transform is not None and len(transform) == 6:
                         geo_poly = [self._pixel_to_geo(pt, transform) for pt in poly]
+                        if transformer is not None:
+                            geo_poly = [list(transformer.transform(pt[0], pt[1])) for pt in geo_poly]
                     else:
                         lat_scale = 1.0 / 111111.0
                         lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat)))
@@ -174,6 +195,7 @@ class ProjectionAgent(BaseAgent):
             content="اكتملت مهمة الإسقاط وحفظ طبقة الأراضي بنجاح."
         )
 
+        self._generate_processed_preview(image_path, task_id, memory)
         return {
             "messages": state.get("messages", []) + [f"{self.name} has finished extracting land layers."],
             "next_agent": "coordinator"
@@ -216,3 +238,148 @@ class ProjectionAgent(BaseAgent):
         remaining = remaining % 175.03
         sahm = round(remaining / 7.29, 2)
         return feddan, qirat, sahm
+
+    def _generate_processed_preview(self, image_path: str, task_id: str, memory: SharedMemory) -> None:
+        """
+        توليد صورة معاينة نهائية خفيفة (بحد أقصى 2048 بكسل) مع رسم حدود المعالم المستخرجة عليها
+        وتحديث مسارها في قاعدة البيانات، لمنع انهيار الذاكرة عشوائية (RAM) مع الصور الضخمة.
+        """
+        self.message_bus.publish(
+            task_id=task_id,
+            sender=self.name,
+            message_type="SYSTEM",
+            content="جاري إنشاء صورة المعاينة النهائية بعد التعديل..."
+        )
+        
+        orig_width, orig_height = 0, 0
+        img_preview = None
+        
+        if rasterio is not None:
+            try:
+                with rasterio.open(image_path) as ds:
+                    orig_width = ds.width
+                    orig_height = ds.height
+                    
+                    max_dim = 2048
+                    if orig_width > max_dim or orig_height > max_dim:
+                        scale = max_dim / max(orig_width, orig_height)
+                        out_width = int(orig_width * scale)
+                        out_height = int(orig_height * scale)
+                        
+                        from rasterio.enums import Resampling
+                        bands = ds.read(
+                            out_shape=(min(3, ds.count), out_height, out_width),
+                            resampling=Resampling.bilinear
+                        )
+                        if bands.ndim == 3:
+                            if bands.shape[0] >= 3:
+                                img_preview = np.stack([bands[0], bands[1], bands[2]], axis=-1)
+                            else:
+                                img_preview = np.transpose(bands, (1, 2, 0))
+                        else:
+                            img_preview = bands
+                        img_preview = np.asarray(img_preview, dtype=np.uint8)
+                        if img_preview.ndim == 2:
+                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
+                        elif img_preview.shape[2] == 1:
+                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
+                        elif img_preview.shape[2] == 4:
+                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGBA2BGR)
+                        
+                        # تحويل RGB إلى BGR لـ OpenCV
+                        img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGB2BGR)
+            except Exception as e:
+                print(f"[ProjectionAgent] Error reading preview with rasterio: {e}")
+                
+        if img_preview is None:
+            try:
+                img_preview = cv2.imread(image_path, cv2.IMREAD_COLOR)
+                if img_preview is not None:
+                    orig_height, orig_width = img_preview.shape[:2]
+                    max_dim = 2048
+                    if orig_width > max_dim or orig_height > max_dim:
+                        scale = max_dim / max(orig_width, orig_height)
+                        out_width = int(orig_width * scale)
+                        out_height = int(orig_height * scale)
+                        img_preview = cv2.resize(img_preview, (out_width, out_height), interpolation=cv2.INTER_AREA)
+            except Exception as e:
+                print(f"[ProjectionAgent] Error reading preview with cv2: {e}")
+                
+        if img_preview is None or orig_width == 0 or orig_height == 0:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content="تعذر إنشاء صورة المعاينة النهائية بسبب فشل قراءة الصورة."
+            )
+            return
+
+        preview_height, preview_width = img_preview.shape[:2]
+        scale_x = preview_width / orig_width
+        scale_y = preview_height / orig_height
+
+        layers = memory.get_task_layers(task_id)
+        if not layers:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content="لا توجد طبقات معالم مسجلة للمهمة لرسمها."
+            )
+            return
+
+        COLOR_MAP = {
+            'agricultural': (34, 139, 34),  # أخضر
+            'buildings': (0, 0, 255),       # أحمر
+            'water': (255, 0, 0),           # أزرق
+            'roads': (200, 200, 200),       # رمادي
+            'arid': (19, 69, 139),          # بني
+            'unknown': (0, 255, 255),       # أصفر
+        }
+
+        overlay = img_preview.copy()
+        
+        for layer in layers:
+            label = layer.get('layer_name', 'unknown').lower()
+            color = COLOR_MAP.get(label, COLOR_MAP['unknown'])
+            
+            polygons = layer.get('polygons', [])
+            if isinstance(polygons, str):
+                try:
+                    import json
+                    polygons = json.loads(polygons)
+                except Exception:
+                    polygons = []
+                    
+            for poly in polygons:
+                if not isinstance(poly, list) or len(poly) < 3:
+                    continue
+                scaled_poly = np.array([
+                    [int(pt[0] * scale_x), int(pt[1] * scale_y)] for pt in poly
+                ], dtype=np.int32)
+                
+                cv2.fillPoly(overlay, [scaled_poly], color)
+                cv2.polylines(img_preview, [scaled_poly], True, color, 2)
+                
+        cv2.addWeighted(overlay, 0.35, img_preview, 0.65, 0, img_preview)
+
+        try:
+            processed_filename = f"{task_id}_processed.png"
+            processed_path = os.path.join(os.path.dirname(image_path), processed_filename)
+            cv2.imwrite(processed_path, img_preview)
+            
+            memory.update_task_processed_image(task_id, processed_path)
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="SYSTEM",
+                content=f"تم حفظ صورة المعاينة النهائية بنجاح: {processed_filename}"
+            )
+        except Exception as err:
+            self.message_bus.publish(
+                task_id=task_id,
+                sender=self.name,
+                message_type="WARNING",
+                content=f"تعذر حفظ صورة المعاينة النهائية: {str(err)}"
+            )
+

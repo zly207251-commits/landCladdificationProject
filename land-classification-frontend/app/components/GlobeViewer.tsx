@@ -47,15 +47,33 @@ const loadCss = (href: string) => {
 
 const loadScript = (src: string) => {
   return new Promise<void>((resolve, reject) => {
-    if (document.querySelector(`script[src='${src}']`)) {
+    if ((window as any).Cesium) {
       resolve();
+      return;
+    }
+
+    const existing = document.querySelector(`script[src='${src}']`);
+    if (existing) {
+      const interval = setInterval(() => {
+        if ((window as any).Cesium) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 50);
       return;
     }
 
     const script = document.createElement("script");
     script.src = src;
     script.async = true;
-    script.onload = () => resolve();
+    script.onload = () => {
+      const interval = setInterval(() => {
+        if ((window as any).Cesium) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 50);
+    };
     script.onerror = () => reject(new Error(`Failed to load script ${src}`));
     document.body.appendChild(script);
   });
@@ -67,6 +85,7 @@ function formatDate(date: Date) {
 
 export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<any>(null);
   const selectionRef = useRef<HTMLDivElement | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -81,6 +100,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
   const [tileZoom, setTileZoom] = useState<number>(17);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
+  const [activePanel, setActivePanel] = useState<string | null>(null);
 
   const createImageryProvider = (providerId: string) => {
     const Cesium = (window as any).Cesium;
@@ -177,7 +197,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                 const center = taskReport.map_center;
                 if (center) {
                   viewerRef.current.camera.flyTo({
-                    destination: Cesium.Cartesian3.fromDegrees(center[1], center[0], 1_500_000),
+                    destination: Cesium.Cartesian3.fromDegrees(center[1], center[0], 2500),
                     orientation: { pitch: Cesium.Math.toRadians(-45) },
                   });
                 }
@@ -296,7 +316,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   }, [selecting]);
 
   const toggleFullscreen = async () => {
-    const el = containerRef.current;
+    const el = wrapperRef.current;
     if (!el) return;
     if (!document.fullscreenElement) {
       try { await el.requestFullscreen(); } catch (e) { console.warn(e); }
@@ -404,171 +424,283 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     if (!viewerRef.current || !(window as any).Cesium) return;
     const Cesium = (window as any).Cesium;
     viewerRef.current.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1_000_000),
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, 2500),
       orientation: { pitch: Cesium.Math.toRadians(-45) },
     });
   };
 
   return (
-    <div className="h-full w-full flex flex-col gap-4">
-      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr,0.8fr] gap-4 h-full">
-        <div className="bg-slate-950 text-white rounded-3xl overflow-hidden shadow-lg h-[620px] relative">
-          <div className="h-full" ref={containerRef} style={{ minHeight: 620 }} />
+    <div ref={wrapperRef} className="w-full h-full min-h-screen relative overflow-hidden shadow-2xl bg-slate-950">
+      {/* خريطة Cesium ملء الشاشة */}
+      <div className="w-full h-full" ref={containerRef} style={{ minHeight: '100vh' }} />
 
-            {/* Overlay لالتقاط أحداث الماوس أثناء وضع التحديد (موثوق عبر جميع المتصفحات) */}
-            <div
-              onMouseDown={(ev) => {
-                console.debug('overlay mousedown', { selecting });
-                if (!selecting) return;
-                const rect = containerRef.current?.getBoundingClientRect();
-                if (!rect) return;
-                const x = ev.clientX - rect.left;
-                const y = ev.clientY - rect.top;
-                setStartPoint({ x, y });
-                if (selectionRef.current) {
-                  selectionRef.current.style.left = `${x}px`;
-                  selectionRef.current.style.top = `${y}px`;
-                  selectionRef.current.style.width = `0px`;
-                  selectionRef.current.style.height = `0px`;
-                  selectionRef.current.style.display = 'block';
-                  selectionRef.current.style.pointerEvents = 'none';
-                }
-              }}
-              onMouseMove={(ev) => {
-                if (!selecting || !startPoint || !selectionRef.current) return;
-                const rect = containerRef.current?.getBoundingClientRect();
-                if (!rect) return;
-                const x = ev.clientX - rect.left;
-                const y = ev.clientY - rect.top;
-                const left = Math.min(startPoint.x, x);
-                const top = Math.min(startPoint.y, y);
-                const width = Math.abs(x - startPoint.x);
-                const height = Math.abs(y - startPoint.y);
-                selectionRef.current.style.left = `${left}px`;
-                selectionRef.current.style.top = `${top}px`;
-                selectionRef.current.style.width = `${width}px`;
-                selectionRef.current.style.height = `${height}px`;
-              }}
-              onMouseUp={(ev) => {
-                if (!selecting || !startPoint || !selectionRef.current) return;
-                const rect = selectionRef.current.getBoundingClientRect();
-                const parentRect = containerRef.current?.getBoundingClientRect();
-                if (!parentRect) return;
-                const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
-                setSelectionRect(relativeRect);
-                setSelecting(false);
-                setStartPoint(null);
-              }}
-              style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 45,
-                background: 'transparent',
-                pointerEvents: selecting ? 'auto' : 'none'
-              }}
-            />
+      {/* Overlay لالتقاط أحداث الماوس أثناء وضع التحديد */}
+      <div
+        onMouseDown={(ev) => {
+          console.debug('overlay mousedown', { selecting });
+          if (!selecting) return;
+          const rect = containerRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          const x = ev.clientX - rect.left;
+          const y = ev.clientY - rect.top;
+          setStartPoint({ x, y });
+          if (selectionRef.current) {
+            selectionRef.current.style.left = `${x}px`;
+            selectionRef.current.style.top = `${y}px`;
+            selectionRef.current.style.width = `0px`;
+            selectionRef.current.style.height = `0px`;
+            selectionRef.current.style.display = 'block';
+            selectionRef.current.style.pointerEvents = 'none';
+          }
+        }}
+        onMouseMove={(ev) => {
+          if (!selecting || !startPoint || !selectionRef.current) return;
+          const rect = containerRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          const x = ev.clientX - rect.left;
+          const y = ev.clientY - rect.top;
+          const left = Math.min(startPoint.x, x);
+          const top = Math.min(startPoint.y, y);
+          const width = Math.abs(x - startPoint.x);
+          const height = Math.abs(y - startPoint.y);
+          selectionRef.current.style.left = `${left}px`;
+          selectionRef.current.style.top = `${top}px`;
+          selectionRef.current.style.width = `${width}px`;
+          selectionRef.current.style.height = `${height}px`;
+        }}
+        onMouseUp={(ev) => {
+          if (!selecting || !startPoint || !selectionRef.current) return;
+          const rect = selectionRef.current.getBoundingClientRect();
+          const parentRect = containerRef.current?.getBoundingClientRect();
+          if (!parentRect) return;
+          const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
+          setSelectionRect(relativeRect);
+          setSelecting(false);
+          setStartPoint(null);
+        }}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 45,
+          background: 'transparent',
+          pointerEvents: selecting ? 'auto' : 'none'
+        }}
+      />
 
-          {/* عناصر التحكم العائمة */}
-          <div className="absolute top-4 left-4 z-[60] flex gap-2">
-            <button onClick={toggleFullscreen} className="rounded-md bg-white/20 px-3 py-2 text-xs">ملء الشاشة</button>
-            <button onClick={() => { setSelecting(!selecting); setSelectionRect(null); setExportLink(null); if (!selecting && selectionRef.current) selectionRef.current.style.display='none'; }} className={`rounded-md px-3 py-2 text-xs ${selecting ? 'bg-red-600 text-white' : 'bg-white/20'}`}>
-              {selecting ? 'إلغاء التحديد' : 'ابدأ التحديد'}
+      {/* شريط الأدوات العلوي العائم */}
+      <div className="absolute top-4 left-4 right-4 z-[60] flex justify-between items-center pointer-events-none">
+        {/* أزرار الإجراءات (أدوات الخريطة) */}
+        <div className="flex gap-2 pointer-events-auto">
+          {/* زر العودة للصفحة الرئيسية */}
+          <a
+            href="/"
+            title="العودة إلى الصفحة الرئيسية"
+            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white border border-white/10 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-all duration-200 flex items-center justify-center hover:scale-105"
+          >
+            🏠
+          </a>
+          
+          <button 
+            onClick={toggleFullscreen} 
+            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white border border-white/10 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+          >
+            🖥️ ملء الشاشة
+          </button>
+          
+          <button 
+            onClick={() => { 
+              setSelecting(!selecting); 
+              setSelectionRect(null); 
+              setExportLink(null); 
+              if (!selecting && selectionRef.current) selectionRef.current.style.display='none'; 
+            }} 
+            className={`rounded-xl px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors border ${
+              selecting 
+                ? 'bg-red-600 text-white border-red-500 hover:bg-red-700' 
+                : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
+            }`}
+          >
+            {selecting ? '❌ إلغاء التحديد' : '✂️ قص منطقة'}
+          </button>
+          
+          {selectionRect && (
+            <button 
+              onClick={saveSelectionAsTiff} 
+              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+            >
+              💾 حفظ المقطع كـ TIFF
             </button>
-            {selectionRect && (
-              <button onClick={saveSelectionAsTiff} className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white">حفظ كـ TIFF</button>
-            )}
-            {exportLink && (
-              <a href={exportLink} download className="rounded-md bg-white/20 px-3 py-2 text-xs">تحميل TIFF</a>
-            )}
-          </div>
-
-          {/* عنصر التحديد البصري */}
-          <div ref={selectionRef} style={{ display: 'none', position: 'absolute', border: '2px dashed #ffde59', background: 'rgba(255,222,89,0.08)', pointerEvents: 'none', zIndex: 50 }} />
+          )}
+          
+          {exportLink && (
+            <a 
+              href={exportLink} 
+              download 
+              className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white border border-blue-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+            >
+              📥 تحميل TIFF
+            </a>
+          )}
         </div>
-        <div className="space-y-4">
-          <div className="rounded-3xl bg-white p-5 shadow-lg">
-            <h2 className="text-xl font-semibold text-slate-800 mb-3">خريطة عالمية بـ NASA GIBS</h2>
-            <p className="text-sm text-slate-600 leading-relaxed">عرض طبقات الأقمار الصناعية مباشرة من NASA GIBS. يمكنك تكبير أي نقطة أو الانتقال إليها عبر الإحداثيات.</p>
+      </div>
+
+      {/* لوحة الأيقونات الجانبية العائمة (Google Maps Style Dock) */}
+      <div className="absolute top-20 right-4 z-50 flex flex-col gap-3 pointer-events-auto">
+        <button
+          onClick={() => setActivePanel(activePanel === 'imagery' ? null : 'imagery')}
+          title="إعدادات القمر الصناعي وطبقات الخريطة"
+          className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-semibold shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-105 border ${
+            activePanel === 'imagery' 
+              ? 'bg-blue-600 text-white border-blue-500' 
+              : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
+          }`}
+        >
+          🛰️
+        </button>
+
+        <button
+          onClick={() => setActivePanel(activePanel === 'flyto' ? null : 'flyto')}
+          title="انتقال سريع للموقع الجغرافي"
+          className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-semibold shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-105 border ${
+            activePanel === 'flyto' 
+              ? 'bg-emerald-600 text-white border-emerald-500' 
+              : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
+          }`}
+        >
+          📍
+        </button>
+
+        <button
+          onClick={() => setActivePanel(activePanel === 'status' ? null : 'status')}
+          title="سجل حالة محرك الخرائط والاتصال"
+          className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-semibold shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-105 border ${
+            activePanel === 'status' 
+              ? 'bg-blue-600 text-white border-blue-500' 
+              : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
+          }`}
+        >
+          💬
+        </button>
+      </div>
+
+      {/* لوحات الإعدادات العائمة جنب الأيقونات */}
+      {activePanel === 'imagery' && (
+        <div className="absolute top-20 right-20 z-50 w-[320px] bg-slate-900/95 backdrop-blur-lg border border-white/10 text-white shadow-2xl rounded-2xl flex flex-col p-4 space-y-4 pointer-events-auto">
+          <div className="flex justify-between items-center border-b border-white/10 pb-2">
+            <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">🛰️ إعدادات الخريطة الخلفية</h4>
+            <button onClick={() => setActivePanel(null)} className="text-slate-400 hover:text-white transition-colors">✕</button>
           </div>
-          <div className="rounded-3xl bg-white p-5 shadow-lg space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700">اختيار مصدر الصور</label>
-              <select
-                value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
-              >
-                {IMAGERY_PROVIDERS.map((provider) => (
-                  <option key={provider.id} value={provider.id}>{provider.label}</option>
-                ))}
-              </select>
-              <p className="mt-2 text-xs text-slate-500">
-                {IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.description}
-              </p>
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-slate-300">مصدر صور الأقمار الصناعية</label>
+            <select
+              value={selectedProvider}
+              onChange={(e) => setSelectedProvider(e.target.value)}
+              className="w-full rounded-xl bg-slate-800 border border-white/10 text-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+            >
+              {IMAGERY_PROVIDERS.map((provider) => (
+                <option key={provider.id} value={provider.id} className="bg-slate-900">{provider.label}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {IMAGERY_PROVIDERS.find((provider) => provider.id === selectedProvider)?.description}
+            </p>
+
+            <div className="pt-1">
+              <label className="block text-xs font-medium text-slate-300">درجة تقريب البلاطات (Zoom)</label>
+              <input 
+                type="number" 
+                min={0} 
+                max={22} 
+                value={tileZoom} 
+                onChange={(e)=>setTileZoom(Number(e.target.value))} 
+                className="mt-1 w-full rounded-xl bg-slate-800 border border-white/10 text-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none" 
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">Zoom للبلاطات (Tile zoom)</label>
-              <input type="number" min={0} max={22} value={tileZoom} onChange={(e)=>setTileZoom(Number(e.target.value))} className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none" />
-              <p className="mt-2 text-xs text-slate-500">اختر مستوى التكبير المستخدم لتحميل البلاطات (كلما زاد الرقم زادت الدقة).</p>
-            </div>
+
             {selectedProvider.startsWith('gibs') && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700">تاريخ صور GIBS</label>
+              <div className="pt-1">
+                <label className="block text-xs font-medium text-slate-300">تاريخ صور NASA GIBS</label>
                 <input
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                  className="mt-1 w-full rounded-xl bg-slate-800 border border-white/10 text-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
                 />
               </div>
             )}
+
             <button
               onClick={updateImageryLayer}
-              className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-white font-semibold hover:bg-blue-700"
+              className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 text-xs transition-colors shadow-md"
             >
-              تحديث مصدر الصور
+              تحديث طبقة الخلفية
             </button>
           </div>
-          <div className="rounded-3xl bg-white p-5 shadow-lg space-y-4">
-            <h3 className="text-lg font-semibold text-slate-800">انتقال سريع</h3>
-            <div className="grid grid-cols-2 gap-3">
+        </div>
+      )}
+
+      {activePanel === 'flyto' && (
+        <div className="absolute top-20 right-20 z-50 w-[320px] bg-slate-900/95 backdrop-blur-lg border border-white/10 text-white shadow-2xl rounded-2xl flex flex-col p-4 space-y-4 pointer-events-auto">
+          <div className="flex justify-between items-center border-b border-white/10 pb-2">
+            <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">📍 انتقال سريع للموقع</h4>
+            <button onClick={() => setActivePanel(null)} className="text-slate-400 hover:text-white transition-colors">✕</button>
+          </div>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-sm font-medium text-slate-700">خط العرض</label>
+                <label className="block text-[10px] text-slate-400">خط العرض (Lat)</label>
                 <input
                   type="number"
                   step="0.0001"
                   value={lat}
                   onChange={(e) => setLat(Number(e.target.value))}
-                  className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                  className="mt-1 w-full rounded-xl bg-slate-800 border border-white/10 text-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700">خط الطول</label>
+                <label className="block text-[10px] text-slate-400">خط الطول (Lon)</label>
                 <input
                   type="number"
                   step="0.0001"
                   value={lon}
                   onChange={(e) => setLon(Number(e.target.value))}
-                  className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                  className="mt-1 w-full rounded-xl bg-slate-800 border border-white/10 text-white px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
                 />
               </div>
             </div>
             <button
               onClick={flyToPoint}
-              className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-white font-semibold hover:bg-emerald-700"
+              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 text-xs transition-colors shadow-md"
             >
-              انتقل إلى النقطة
+              🎯 تحليق للموقع المحدد
             </button>
           </div>
-          <div className="rounded-3xl bg-slate-900 p-5 text-white shadow-lg">
-            <p className="text-sm">{statusMessage}</p>
-            {!isLoaded && <p className="mt-3 text-xs text-slate-300">جاري إعداد Cesium وطبقة الأقمار الصناعية...</p>}
+        </div>
+      )}
+
+      {activePanel === 'status' && (
+        <div className="absolute top-20 right-20 z-50 w-[320px] bg-slate-900/95 backdrop-blur-lg border border-white/10 text-white shadow-2xl rounded-2xl flex flex-col p-4 space-y-3 pointer-events-auto">
+          <div className="flex justify-between items-center border-b border-white/10 pb-2">
+            <h4 className="text-xs font-bold text-slate-200">💬 حالة عارض سيزيوم</h4>
+            <button onClick={() => setActivePanel(null)} className="text-slate-400 hover:text-white transition-colors">✕</button>
+          </div>
+          <div className="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 space-y-2">
+            <p className="text-xs text-slate-300 leading-relaxed">{statusMessage}</p>
+            {!isLoaded && (
+              <div className="flex items-center gap-2 text-[11px] text-blue-400 pt-1">
+                <span className="animate-spin text-xs">🌀</span>
+                <span>جاري إعداد محرك الخرائط...</span>
+              </div>
+            )}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* عنصر التحديد البصري */}
+      <div ref={selectionRef} style={{ display: 'none', position: 'absolute', border: '2px dashed #ffde59', background: 'rgba(255,222,89,0.08)', pointerEvents: 'none', zIndex: 50 }} />
     </div>
   );
 }

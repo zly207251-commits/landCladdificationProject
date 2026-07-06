@@ -89,6 +89,13 @@ class ImageTiler:
                 geo_polygons.append(geo_poly)
         return geo_polygons
 
+    def _pixel_to_geo_rasterio(self, pt: List[float], transform: Tuple[float, float, float, float, float, float]) -> List[float]:
+        c, a, b, f, d, e = transform
+        col, row = pt[0], pt[1]
+        x = a * col + b * row + c
+        y = d * col + e * row + f
+        return [float(x), float(y)]
+
     def _convert_to_agricultural_units(self, area_sqm: float) -> Tuple[int, int, float]:
         feddan = int(area_sqm // 4200.83)
         remaining = area_sqm % 4200.83
@@ -117,7 +124,8 @@ class ImageTiler:
         pixel_scale: float = 0.5,
         ref_lat: float = 24.7136,
         ref_lon: float = 46.6753,
-        message_bus=None
+        message_bus=None,
+        use_geo_metadata: bool = False
     ) -> TiledProcessingResult:
         start_time = time.time()
         
@@ -159,6 +167,20 @@ class ImageTiler:
                 with rasterio.open(image_path) as src:
                     height, width = src.height, src.width
                     log_msg("ACTION", f"أبعاد الصورة: {width}x{height} ({width*height/1e6:.1f}MP)")
+                    
+                    transform = None
+                    crs_str = None
+                    transformer = None
+                    if use_geo_metadata and src.crs and src.transform:
+                        transform = src.transform.to_gdal()
+                        crs_str = str(src.crs)
+                        if crs_str != 'EPSG:4326':
+                            try:
+                                from pyproj import Transformer
+                                transformer = Transformer.from_crs(crs_str, 'EPSG:4326', always_xy=True)
+                                log_msg("INFO", f"تم تهيئة المحول الجغرافي من {crs_str} إلى EPSG:4326")
+                            except Exception as e:
+                                log_msg("WARNING", f"تعذر إنشاء Transformer للإسقاط الجغرافي: {e}")
                     
                     tiles = self.calculate_tiles(height, width)
                     total_tiles = len(tiles)
@@ -212,6 +234,8 @@ class ImageTiler:
                             tile_image = np.asarray(tile_image, dtype=np.uint8)
                             if tile_image.ndim == 2:
                                 tile_image = cv2.cvtColor(tile_image, cv2.COLOR_GRAY2BGR)
+                            elif tile_image.shape[2] == 1:
+                                tile_image = cv2.cvtColor(tile_image, cv2.COLOR_GRAY2BGR)
                             elif tile_image.shape[2] == 4:
                                 tile_image = cv2.cvtColor(tile_image, cv2.COLOR_RGBA2BGR)
                                 
@@ -226,7 +250,13 @@ class ImageTiler:
                                         for poly in poly_list:
                                             # التصحيح والتحويل الجغرافي وحساب المساحة
                                             adjusted_poly = self.adjust_coordinates([poly], y_start, x_start)[0]
-                                            geo_poly = self._pixel_to_geo_simple([adjusted_poly], pixel_scale, ref_lat, ref_lon)[0]
+                                            
+                                            if transform is not None and len(transform) == 6:
+                                                geo_poly = [self._pixel_to_geo_rasterio(pt, transform) for pt in adjusted_poly]
+                                                if transformer is not None:
+                                                    geo_poly = [list(transformer.transform(pt[0], pt[1])) for pt in geo_poly]
+                                            else:
+                                                geo_poly = self._pixel_to_geo_simple([adjusted_poly], pixel_scale, ref_lat, ref_lon)[0]
                                             
                                             pixel_area = self._calculate_polygon_area(adjusted_poly)
                                             area_sqm = pixel_area * (pixel_scale ** 2)
@@ -304,7 +334,7 @@ def should_use_tiling(image_path: str, tile_size: Optional[int] = None) -> bool:
         import rasterio
         with rasterio.open(image_path) as src:
             total_pixels = src.height * src.width
-            threshold_pixels = tile_size * tile_size * 2
+            threshold_pixels = max(tile_size * tile_size * 2, 6000000)
             return total_pixels > threshold_pixels
     except Exception:
         return False
