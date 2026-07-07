@@ -122,24 +122,43 @@ TABLES_SQL = {
     }
 }
 
+_USE_POSTGRES = None
+
 def get_db_connection(db_path: str = "shared_memory.db"):
     """دالة مصنع لإنشاء اتصالات قواعد البيانات بناءً على الإعداد الحالي."""
-    if DATABASE_URL and psycopg2 is not None:
+    global _USE_POSTGRES
+    
+    if _USE_POSTGRES is not False and DATABASE_URL and psycopg2 is not None:
         try:
-            return psycopg2.connect(DATABASE_URL)
+            # محاولة الاتصال بـ Postgres مع مهلة 3 ثواني لتجنب البطء في حال عدم توفره
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
+            _USE_POSTGRES = True
+            return conn
         except Exception as e:
             print(f"⚠️ فشل الاتصال بخادم PostgreSQL: {e}. يتم التراجع إلى SQLite...")
+            _USE_POSTGRES = False
     
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
-def format_query(query: str) -> str:
-    """تنسيق الاستعلامات حسب نوع قاعدة البيانات (تحويل %s إلى ? في SQLite)."""
-    if DATABASE_URL and psycopg2 is not None:
-        return query
-    return query.replace("%s", "?")
-
 def is_postgresql() -> bool:
     """التحقق مما إذا كانت قاعدة البيانات النشطة هي PostgreSQL."""
-    return bool(DATABASE_URL and psycopg2 is not None)
+    global _USE_POSTGRES
+    if _USE_POSTGRES is None:
+        # اختبار الاتصال مرة واحدة وحفظ النتيجة لتجنب البطء
+        if DATABASE_URL and psycopg2 is not None:
+            try:
+                conn = get_db_connection()
+                conn.close()
+            except Exception:
+                pass
+        else:
+            _USE_POSTGRES = False
+    return _USE_POSTGRES is True
+
+def format_query(query: str) -> str:
+    """تنسيق الاستعلامات حسب نوع قاعدة البيانات (تحويل %s إلى ? في SQLite)."""
+    if is_postgresql():
+        return query
+    return query.replace("%s", "?")

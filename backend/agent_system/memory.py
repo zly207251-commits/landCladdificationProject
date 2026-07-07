@@ -77,11 +77,7 @@ class SharedMemory:
         db_type = "postgres" if is_postgresql() else "sqlite"
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute("PRAGMA journal_mode=WAL;")
-            except Exception:
-                pass
-            
+
             # تفعيل امتداد PostGIS في حال كنا نستخدم PostgreSQL
             if is_postgresql():
                 try:

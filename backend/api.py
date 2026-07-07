@@ -14,6 +14,7 @@ import json
 import mimetypes
 import importlib.util
 import re
+import threading
 from threading import Thread
 from pydantic import BaseModel
 from PIL import Image
