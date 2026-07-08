@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import uvicorn
 import asyncio
 import numpy as np
@@ -15,6 +17,7 @@ import re
 import tempfile
 import zipfile
 import shutil
+import threading
 from threading import Thread
 from pydantic import BaseModel
 from PIL import Image
@@ -47,6 +50,8 @@ app = FastAPI(
     version="2.0"
 )
 
+# Configure CORS with wildcard origin for GitHub.dev/potential dynamic hosts.
+# If your frontend sends credentials, change this to a fixed origin and allow_credentials=True.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,6 +60,76 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+DEFAULT_CHUNK_SIZE_BYTES = 4 * 1024 * 1024
+DEFAULT_CHUNK_UPLOAD_CONCURRENCY = 2
+
+
+def get_chunk_upload_config() -> dict:
+    """Return safe chunk upload settings for environments with low request-body limits."""
+    try:
+        chunk_size = int(os.getenv("CHUNK_UPLOAD_SIZE_BYTES", str(DEFAULT_CHUNK_SIZE_BYTES)))
+    except ValueError:
+        chunk_size = DEFAULT_CHUNK_SIZE_BYTES
+
+    try:
+        concurrency = int(os.getenv("CHUNK_UPLOAD_CONCURRENCY", str(DEFAULT_CHUNK_UPLOAD_CONCURRENCY)))
+    except ValueError:
+        concurrency = DEFAULT_CHUNK_UPLOAD_CONCURRENCY
+
+    return {
+        "chunk_size_bytes": max(1024 * 1024, chunk_size),
+        "concurrency": max(1, concurrency),
+    }
+
+
+@app.middleware("http")
+async def add_cors_headers_to_all_responses(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        response.headers["Access-Control-Max-Age"] = "600"
+        return response
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Max-Age"] = "600"
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    response = JSONResponse(status_code=422, content={"detail": exc.errors()})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
 
 # تهيئة قاعدة بيانات الذاكرة المشتركة وباص الرسائل
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -68,6 +143,48 @@ os.makedirs(CHUNK_UPLOAD_DIR, exist_ok=True)
 memory = SharedMemory(db_path=DB_PATH)
 message_bus = MessageBus(memory)
 
+# Segmenter will be loaded in background on startup to avoid blocking import
+segmenter = None
+_segmenter_lock = threading.Lock()
+_segmenter_ready = threading.Event()
+
+def _load_segmenter_background():
+    global segmenter
+    try:
+        seg = LandSegmenterSAM()
+        with _segmenter_lock:
+            segmenter = seg
+        _segmenter_ready.set()
+        print("✔️ Segmenter loaded in background and ready")
+    except Exception as e:
+        print(f"⚠️ Failed loading segmenter in background: {e}")
+
+
+@app.on_event("startup")
+def _start_segmenter_loader():
+    t = threading.Thread(target=_load_segmenter_background, daemon=True)
+    t.start()
+
+def ensure_segmenter(timeout: float = 60.0):
+    """Ensure the global `segmenter` is loaded. Wait up to `timeout` seconds.
+    If not ready after timeout, attempt a synchronous load as fallback.
+    """
+    global segmenter
+    if _segmenter_ready.is_set():
+        return segmenter
+    # wait briefly for background loader
+    waited = _segmenter_ready.wait(timeout=timeout)
+    if waited and segmenter is not None:
+        return segmenter
+    # fallback: attempt synchronous load (may block)
+    try:
+        with _segmenter_lock:
+            if segmenter is None:
+                segmenter = LandSegmenterSAM()
+                _segmenter_ready.set()
+    except Exception as e:
+        print(f"⚠️ Failed synchronous segmenter load fallback: {e}")
+    return segmenter
 _segmenter: LandSegmenterSAM | None = None
 
 def get_segmenter() -> LandSegmenterSAM:
@@ -132,10 +249,12 @@ def normalize_remote_url(remote_url: str) -> str:
 
 
 def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
+    import html as html_lib
     # Google Drive may render a link on the warning page with the download URL.
     match = re.search(r'href="([^"]*uc\?export=download[^"]*)"', html)
     if match:
-        return urljoin(base_url, match.group(1))
+        unescaped_url = html_lib.unescape(match.group(1))
+        return urljoin(base_url, unescaped_url)
 
     # Look for the download form and construct its GET URL.
     form_match = re.search(r'<form[^>]*action="([^"]*)"[^>]*>(.*?)</form>', html, re.DOTALL)
@@ -406,6 +525,11 @@ def run_agent_swarm_background(task_id: str, image_path: str):
 
 # --- نقطة نهاية رفع الملفات المقطعة ---
 
+@app.get("/tasks/analyze/chunk/config", summary="Get safe chunk upload configuration")
+def chunk_upload_config():
+    return get_chunk_upload_config()
+
+
 @app.get("/tasks/analyze/chunk/status", summary="Check which chunks are already stored for a resumable upload")
 async def get_chunk_upload_status(upload_id: str):
     metadata = read_chunk_metadata(upload_id)
@@ -418,14 +542,26 @@ async def get_chunk_upload_status(upload_id: str):
             "filename": None,
         }
 
-    uploaded_chunks = metadata.get("uploaded_chunks", [])
+    # Detect uploaded chunks directly from files on disk
+    chunk_dir = get_chunk_dir(upload_id)
+    uploaded_chunks = []
+    total_chunks = metadata.get("total_chunks", 0)
+    for idx in range(int(total_chunks)):
+        if os.path.exists(os.path.join(chunk_dir, f"chunk_{idx}")):
+            uploaded_chunks.append(idx)
+
     return {
         "upload_id": upload_id,
         "exists": True,
         "uploaded_chunks": sorted(uploaded_chunks),
-        "total_chunks": metadata.get("total_chunks", 0),
+        "total_chunks": total_chunks,
         "filename": metadata.get("filename"),
     }
+
+
+def _write_file_sync(path: str, content: bytes):
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 @app.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
@@ -454,35 +590,32 @@ async def upload_task_chunk(
     upload_dir = get_chunk_dir(upload_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    metadata = read_chunk_metadata(upload_id) or {}
-    metadata.update({
-        "filename": filename,
-        "image_type": image_type,
-        "geospatial_crs": geospatial_crs,
-        "use_geo_metadata": use_geo_metadata,
-        "pixel_scale_meters": pixel_scale_meters,
-        "ref_latitude": ref_latitude,
-        "ref_longitude": ref_longitude,
-        "sam_use_fallback": sam_use_fallback,
-        "sam_min_mask_region_area": sam_min_mask_region_area,
-        "sam_points_per_side": sam_points_per_side,
-        "sam_pred_iou_thresh": sam_pred_iou_thresh,
-        "sam_stability_score_thresh": sam_stability_score_thresh,
-        "total_chunks": total_chunks,
-        "tfw_content": tfw_content
-    })
-
-    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
-    uploaded_chunks.add(chunk_index)
-    metadata["uploaded_chunks"] = sorted(uploaded_chunks)
-
-    write_chunk_metadata(upload_id, metadata)
+    # metadata.json only needs to be written once (no need to update uploaded_chunks in it)
+    meta_path = os.path.join(upload_dir, "metadata.json")
+    if not os.path.exists(meta_path):
+        metadata = {
+            "filename": filename,
+            "image_type": image_type,
+            "geospatial_crs": geospatial_crs,
+            "use_geo_metadata": use_geo_metadata,
+            "pixel_scale_meters": pixel_scale_meters,
+            "ref_latitude": ref_latitude,
+            "ref_longitude": ref_longitude,
+            "sam_use_fallback": sam_use_fallback,
+            "sam_min_mask_region_area": sam_min_mask_region_area,
+            "sam_points_per_side": sam_points_per_side,
+            "sam_pred_iou_thresh": sam_pred_iou_thresh,
+            "sam_stability_score_thresh": sam_stability_score_thresh,
+            "total_chunks": total_chunks,
+            "tfw_content": tfw_content
+        }
+        write_chunk_metadata(upload_id, metadata)
 
     chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")
     try:
-        with open(chunk_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+        content = await file.read()
+        # Offload blocking write to a background thread to prevent blocking Uvicorn's async event loop
+        await asyncio.to_thread(_write_file_sync, chunk_path, content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"تعذر حفظ جزء الملف: {str(e)}")
 
@@ -518,9 +651,14 @@ async def complete_task_chunk_upload(
     if total_chunks is None:
         raise HTTPException(status_code=400, detail="عدد الأجزاء مفقود")
 
-    uploaded_chunks = set(metadata.get("uploaded_chunks", []))
-    expected_chunks = set(range(int(total_chunks)))
-    missing_chunks = sorted(expected_chunks - uploaded_chunks)
+    # Validate that all chunk files physically exist on disk
+    chunk_dir = get_chunk_dir(upload_id)
+    missing_chunks = []
+    for idx in range(int(total_chunks)):
+        chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
+        if not os.path.exists(chunk_path):
+            missing_chunks.append(idx)
+
     if missing_chunks:
         raise HTTPException(status_code=400, detail=f"الأجزاء غير المكتملة: {missing_chunks}")
 
@@ -530,7 +668,8 @@ async def complete_task_chunk_upload(
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
     try:
-        merge_chunk_files(upload_id, temp_file_path, total_chunks)
+        # Offload file merge to background thread
+        await asyncio.to_thread(merge_chunk_files, upload_id, temp_file_path, total_chunks)
         cleanup_chunk_upload(upload_id)
         
         # كتابة ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
@@ -578,6 +717,17 @@ async def complete_task_chunk_upload(
 
 @app.options("/tasks/analyze/chunk/complete")
 async def options_task_chunk_complete(request: Request):
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
+
+@app.options("/tasks/analyze/remote")
+async def options_task_remote(request: Request):
+    # Explicitly respond to preflight to ensure CORS headers reach the browser
     origin = request.headers.get("origin", "*")
     return Response(status_code=204, headers={
         "Access-Control-Allow-Origin": origin,
@@ -819,9 +969,10 @@ async def analyze_image_with_agents(
         "status": "PENDING"
     }
 
-@app.get("/tasks/{task_id}/status", summary="2. الاستعلام عن حالة المهمة")
+@app.get("/tasks/{task_id}/status", summary="Get task status - الاستعلام عن حالة المهمة")
 def get_task_status(task_id: str):
     """
+    Get the status of a task to check if it is pending, in progress, completed, or failed.
     الاستعلام عن حالة المهمة لمعرفة ما إذا كانت معلقة، قيد التنفيذ، مكتملة، أو فشلت.
     يتضمن أيضاً إحصائيات تقدم القطع (tiles).
     """
@@ -1593,12 +1744,28 @@ async def segment_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image")
 
     # استخراج القطع من SAM
-    polygons = segmenter.segment_image(img)
+    seg = ensure_segmenter()
+    if seg is None:
+        raise HTTPException(status_code=503, detail="SAM model not available")
 
-    # رسم الحدود على الصورة
-    for poly in polygons:
-        pts = poly.astype(np.int32)
-        cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+    segments = seg.segment_image(img)
+
+    # رسم الحدود على الصورة (نتيجة segment_image قد تكون قائمة قواميس تحتوي 'polygons')
+    for seg_item in segments:
+        polys = None
+        if isinstance(seg_item, dict):
+            polys = seg_item.get('polygons', [])
+        elif isinstance(seg_item, (list, tuple)):
+            polys = seg_item
+        else:
+            continue
+
+        for poly in polys:
+            try:
+                pts = np.array(poly, dtype=np.int32)
+                cv2.polylines(img, [pts], True, (0, 255, 0), 2)
+            except Exception:
+                continue
 
     # إخراج الصورة
     _, buffer = cv2.imencode(".png", img)

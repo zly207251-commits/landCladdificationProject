@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 
 class LandSegmenterSAM:
-    def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True, use_fallback=False, min_mask_region_area=500):
+    def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True, use_fallback=False, min_mask_region_area=500, tile_size=1024, overlap=128):
         self.use_sam = False
         self.mask_generator = None
         self.semantic_segmenter = None
@@ -18,6 +18,8 @@ class LandSegmenterSAM:
         self.points_per_side = 8
         self.pred_iou_thresh = 0.45
         self.stability_score_thresh = 0.30
+        self.tile_size = tile_size
+        self.overlap = overlap
         self._models_loaded = False
 
         if not os.path.exists(model_path):
@@ -148,6 +150,43 @@ class LandSegmenterSAM:
         if mean_brightness < 5 or mean_brightness > 250:
             raise ValueError(f"Invalid image: mean brightness={mean_brightness:.2f}")
 
+        # التحقق إذا كانت الصورة كبيرة وتحتاج إلى المعالجة عبر البلاطات (Tiles)
+        # لتسريع المعالجة بشكل كبير وتجنب استهلاك الذاكرة، سنقوم بتصغير الصورة إذا تجاوزت الحد الأقصى للبلاطة
+        MAX_PROCESSING_DIM = 1024
+        if h > MAX_PROCESSING_DIM or w > MAX_PROCESSING_DIM:
+            print(f"⚡ الصورة كبيرة جداً ({w}x{h}). سيتم تصغيرها مؤقتاً لتسريع معالجة SAM وتوفير الذاكرة...")
+            # حساب الأبعاد الجديدة مع الحفاظ على نسبة العرض إلى الارتفاع
+            if w > h:
+                new_w = MAX_PROCESSING_DIM
+                new_h = int(h * (MAX_PROCESSING_DIM / w))
+            else:
+                new_h = MAX_PROCESSING_DIM
+                new_w = int(w * (MAX_PROCESSING_DIM / h))
+            
+            resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+            # معالجة الصورة المصغرة في بلاطة واحدة سريعة
+            resized_segments = self._segment_single_tile(resized_image)
+            
+            # إعادة تكبير المضلعات والأقنعة للأبعاد الأصلية
+            scale_x = w / new_w
+            scale_y = h / new_h
+            
+            for seg in resized_segments:
+                if seg.get('mask') is not None:
+                    seg['mask'] = cv2.resize(seg['mask'], (w, h), interpolation=cv2.INTER_NEAREST)
+                
+                scaled_polys = []
+                for poly in seg.get('polygons', []):
+                    scaled_poly = [[pt[0] * scale_x, pt[1] * scale_y] for pt in poly]
+                    scaled_polys.append(scaled_poly)
+                seg['polygons'] = scaled_polys
+            
+            return resized_segments
+        else:
+            return self._segment_single_tile(image)
+
+    def _segment_single_tile(self, image):
         if self.use_sam and self.mask_generator:
             try:
                 masks = self.mask_generator.generate(image)
@@ -233,6 +272,157 @@ class LandSegmenterSAM:
             raise RuntimeError("SAM model not available and fail_fast=True")
 
         return self._fallback_segmentation(image, min_area=150)
+
+    def _segment_image_tiled(self, image) -> List[Dict[str, Any]]:
+        h, w = image.shape[:2]
+        tile_size = self.tile_size
+        overlap = self.overlap
+
+        x_coords = []
+        x = 0
+        while x < w:
+            x_coords.append(x)
+            if x + tile_size >= w:
+                break
+            x += tile_size - overlap
+
+        y_coords = []
+        y = 0
+        while y < h:
+            y_coords.append(y)
+            if y + tile_size >= h:
+                break
+            y += tile_size - overlap
+
+        all_segments_by_label: Dict[str, List[tuple]] = {}
+
+        print(f"🧩 تقسيم الصورة إلى {len(x_coords)}x{len(y_coords)} = {len(x_coords)*len(y_coords)} بلاطة...")
+
+        from shapely.geometry import Polygon
+
+        for y_start in y_coords:
+            for x_start in x_coords:
+                y_end = min(y_start + tile_size, h)
+                x_end = min(x_start + tile_size, w)
+
+                if (y_end - y_start) < 50 or (x_end - x_start) < 50:
+                    continue
+
+                tile = image[y_start:y_end, x_start:x_end]
+                print(f"🎬 معالجة البلاطة: ({x_start},{y_start}) إلى ({x_end},{y_end})")
+
+                try:
+                    tile_segments = self._segment_single_tile(tile)
+                except Exception as e:
+                    print(f"⚠️ فشل معالجة البلاطة عند ({x_start},{y_start}): {e}")
+                    continue
+
+                for seg in tile_segments:
+                    label = seg.get('label', 'unknown')
+                    score = seg.get('score', 0.5)
+                    polygons = seg.get('polygons', [])
+                    for poly in polygons:
+                        global_poly = [[pt[0] + x_start, pt[1] + y_start] for pt in poly]
+                        if len(global_poly) >= 3:
+                            try:
+                                shapely_poly = Polygon(global_poly)
+                                if not shapely_poly.is_valid:
+                                    shapely_poly = shapely_poly.buffer(0)
+                                if not shapely_poly.is_empty and shapely_poly.is_valid:
+                                    if label not in all_segments_by_label:
+                                        all_segments_by_label[label] = []
+                                    all_segments_by_label[label].append((shapely_poly, score))
+                            except Exception as e:
+                                print(f"⚠️ خطأ في تحويل المضلع إلى Shapely: {e}")
+
+        # دمج وتصفية المضلعات المتداخلة
+        final_segments = []
+        for label, poly_list in all_segments_by_label.items():
+            print(f"🔄 دمج مضلعات فئة {label}: العدد الأصلي = {len(poly_list)}")
+            merged_list = self._merge_overlapping_polygons(poly_list)
+            print(f"✔️ العدد بعد الدمج = {len(merged_list)}")
+            for poly, score in merged_list:
+                try:
+                    if poly.geom_type == 'Polygon':
+                        coords = [list(map(float, c)) for c in poly.exterior.coords[:-1]]
+                        final_segments.append({
+                            'label': label,
+                            'mask': None,
+                            'polygons': [coords],
+                            'score': score
+                        })
+                    elif poly.geom_type == 'MultiPolygon':
+                        for sub_poly in poly.geoms:
+                            if not sub_poly.is_empty:
+                                coords = [list(map(float, c)) for c in sub_poly.exterior.coords[:-1]]
+                                final_segments.append({
+                                    'label': label,
+                                    'mask': None,
+                                    'polygons': [coords],
+                                    'score': score
+                                })
+                except Exception as e:
+                    print(f"⚠️ خطأ أثناء تصدير إحداثيات مضلع Shapely: {e}")
+
+        return final_segments
+
+    def _merge_overlapping_polygons(self, poly_list: List[tuple]) -> List[tuple]:
+        if not poly_list:
+            return []
+
+        n = len(poly_list)
+        parent = list(range(n))
+
+        def find(i):
+            if parent[i] == i:
+                return i
+            parent[i] = find(parent[i])
+            return parent[i]
+
+        def union(i, j):
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_i] = root_j
+
+        for i in range(n):
+            poly_i, _ = poly_list[i]
+            for j in range(i + 1, n):
+                poly_j, _ = poly_list[j]
+                try:
+                    inter_area = poly_i.intersection(poly_j).area
+                    if inter_area > 0:
+                        union_area = poly_i.union(poly_j).area
+                        iou = inter_area / union_area if union_area > 0 else 0
+                        min_area_ratio = inter_area / min(poly_i.area, poly_j.area)
+                        # دمج إذا كان التداخل كبيراً (القطع نفسها مستخلصة مرتين) أو إحداهما داخل الأخرى بنسبة كبيرة
+                        if iou > 0.3 or min_area_ratio > 0.70:
+                            union(i, j)
+                except Exception:
+                    pass
+
+        clusters = {}
+        for i in range(n):
+            root = find(i)
+            if root not in clusters:
+                clusters[root] = []
+            clusters[root].append(poly_list[i])
+
+        results = []
+        for root, cluster in clusters.items():
+            if len(cluster) == 1:
+                results.append(cluster[0])
+            else:
+                try:
+                    poly_accum = cluster[0][0]
+                    for p, _ in cluster[1:]:
+                        poly_accum = poly_accum.union(p)
+                    max_score = max(s for _, s in cluster)
+                    results.append((poly_accum, max_score))
+                except Exception:
+                    largest = max(cluster, key=lambda x: x[0].area)
+                    results.append(largest)
+        return results
 
     def _fallback_segmentation(self, image, min_area: int = 150):
         polygons = []
@@ -326,14 +516,14 @@ class LandColorClassifier:
     def classify_mask(self, image: np.ndarray, mask: np.ndarray) -> str:
         """
         Classify a binary mask region in the image into a simple semantic label.
-        Returns one of: 'agricultural','arid','roads','buildings','water','unknown'
+        Returns one of: 'أرض', 'مبنى', 'شارع', 'جبل', 'مزرعة', 'وادي', 'وغيرها'
         """
         if mask is None or image is None:
-            return 'unknown'
+            return 'وغيرها'
         # ensure mask is binary 0/1
         bin_mask = (mask > 0).astype(np.uint8)
         if bin_mask.sum() == 0:
-            return 'unknown'
+            return 'وغيرها'
 
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         # compute mean HSV over masked pixels
@@ -341,7 +531,7 @@ class LandColorClassifier:
         s_vals = hsv[:, :, 1][bin_mask.astype(bool)]
         v_vals = hsv[:, :, 2][bin_mask.astype(bool)]
         if len(h_vals) == 0:
-            return 'unknown'
+            return 'وغيرها'
         mean_h = int(np.mean(h_vals))
         mean_s = int(np.mean(s_vals))
         mean_v = int(np.mean(v_vals))
@@ -357,24 +547,28 @@ class LandColorClassifier:
 
         # heuristics
         if 35 <= mean_h <= 85 and mean_s > 40 and mean_v > 40:
-            return 'agricultural'
+            if mean_s > 70:
+                return 'مزرعة'
+            return 'أرض'
         if 90 <= mean_h <= 140 and mean_s > 30 and mean_v > 20:
-            return 'water'
+            return 'وادي'
         if 10 <= mean_h <= 35 and mean_s > 30 and mean_v > 40:
-            return 'arid'
+            if mean_v < 100:
+                return 'جبل'
+            return 'أرض'
 
         if mean_s < 50 and mean_v > 180 and shape_ratio < 0.35 and not is_large_area:
-            return 'roads'
+            return 'شارع'
         if mean_s < 40 and mean_v > 160 and shape_ratio < 0.45 and not is_large_area:
-            return 'roads'
+            return 'شارع'
 
         if ((mean_h < 10 or mean_h > 160) and mean_v > 90 and mean_s > 20) or (mean_s < 35 and mean_v > 180 and not is_large_area):
-            return 'buildings'
+            return 'مبنى'
 
         if mean_s < 25 and mean_v > 140 and not is_large_area:
-            return 'roads'
+            return 'شارع'
 
-        return 'unknown'
+        return 'وغيرها'
 
     def _get_color_ratios(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -458,20 +652,20 @@ class SegFormerSemanticSegmenter:
         category_map = {}
         for idx, label in self.id2label.items():
             normalized = label.lower()
-            # نُحدد فقط تحويلات واضحة؛ أي فئة غير واضحة تُعطى 'unknown' لتجنّب التصنيف الخاطئ
             if any(token in normalized for token in ["road", "street", "highway", "runway", "bridge", "path", "sidewalk", "track"]):
-                category_map[int(idx)] = "roads"
+                category_map[int(idx)] = "شارع"
             elif any(token in normalized for token in ["building", "house", "tower", "wall", "garage", "factory", "church", "hut", "office", "hotel", "stadium"]):
-                category_map[int(idx)] = "buildings"
+                category_map[int(idx)] = "مبنى"
             elif any(token in normalized for token in ["river", "lake", "pond", "sea", "ocean", "water", "canal", "swamp", "wetland", "reservoir"]):
-                category_map[int(idx)] = "water"
-            elif any(token in normalized for token in ["grass", "field", "crop", "meadow", "farm", "farmland", "orchard", "vegetation"]):
-                category_map[int(idx)] = "agricultural"
+                category_map[int(idx)] = "وادي"
+            elif any(token in normalized for token in ["crop", "farm", "farmland", "orchard"]):
+                category_map[int(idx)] = "مزرعة"
+            elif any(token in normalized for token in ["grass", "field", "meadow", "vegetation"]):
+                category_map[int(idx)] = "أرض"
             elif any(token in normalized for token in ["sand", "dirt", "rock", "mountain", "desert", "gravel", "soil", "cliff"]):
-                category_map[int(idx)] = "arid"
+                category_map[int(idx)] = "جبل"
             else:
-                # اجعل الافتراضي محافظًا: نتركه 'unknown' بدلاً من تخمين خاطئ
-                category_map[int(idx)] = "unknown"
+                category_map[int(idx)] = "وغيرها"
         return category_map
 
     def segment_image(self, image: np.ndarray) -> np.ndarray:

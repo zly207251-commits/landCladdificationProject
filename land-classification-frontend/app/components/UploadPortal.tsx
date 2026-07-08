@@ -25,13 +25,13 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileInfo, setFileInfo] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRegion, setSelectedRegion] = useState<string>('riyadh');
+  const [selectedRegion, setSelectedRegion] = useState<string>('sanaa');
   const [imageType, setImageType] = useState<ImageType>('regular');
   const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
   const [remoteUrl, setRemoteUrl] = useState('');
   const [pixelScale, setPixelScale] = useState('0.5');
-  const [refLatitude, setRefLatitude] = useState('24.7136');
-  const [refLongitude, setRefLongitude] = useState('46.6753');
+  const [refLatitude, setRefLatitude] = useState('15.3694');
+  const [refLongitude, setRefLongitude] = useState('44.1910');
   const [geoCrs, setGeoCrs] = useState('EPSG:4326');
   const [useGeoMetadata, setUseGeoMetadata] = useState(true);
   const [samUseFallback, setSamUseFallback] = useState(false);
@@ -55,8 +55,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     reader.readAsText(file);
   };
 
-  const CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8MB per chunk to avoid proxy/server 413 limits
-  const UPLOAD_CONCURRENCY = 4; // concurrent chunk uploads
+  const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per chunk to stay below common GitHub.dev/proxy and server 413 limits
+  const UPLOAD_CONCURRENCY = 6; // Maximize parallel upload requests for maximum speed
   const MAX_RETRIES = 2;
 
   const buildUploadId = (): string => {
@@ -70,7 +70,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const pollRef = useRef<number | null>(null);
 
   const uploadFileChunks = async (file: File, uploadId: string, metadata: Record<string, any>) => {
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+    // Dynamic chunk size: 12MB for large files (>150MB) to reduce HTTP connection overhead and speed up uploads, 4MB default
+    const CHUNK_SIZE_BYTES = file.size > 150 * 1024 * 1024 ? 12 * 1024 * 1024 : 4 * 1024 * 1024;
+    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE_BYTES));
     const totalBytes = file.size;
 
     const getChunkBounds = (chunkIndex: number) => {
@@ -234,12 +236,24 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     };
   }, []);
 
-  // المناطق المتاحة (من الفرونت اند الحالي + PDF)
+  // تحديث الإحداثيات تلقائياً عند تغيير المنطقة
+  useEffect(() => {
+    const region = regions.find(r => r.id === selectedRegion);
+    if (region && region.coordinates) {
+      setRefLatitude(String(region.coordinates[0]));
+      setRefLongitude(String(region.coordinates[1]));
+    }
+  }, [selectedRegion]);
+
+  // المناطق المتاحة (محافظات اليمن وهيئات الأوقاف)
   const regions = [
-    { id: 'riyadh', name: 'منطقة 1 - الرياض', coordinates: [24.7136, 46.6753] },
-    { id: 'jeddah', name: 'منطقة 2 - جدة', coordinates: [21.4858, 39.1925] },
-    { id: 'dammam', name: 'منطقة 3 - الدمام', coordinates: [26.4207, 50.0888] },
-    { id: 'custom', name: 'منطقة مخصصة', coordinates: null }
+    { id: 'sanaa', name: 'أوقاف محافظة صنعاء', coordinates: [15.3694, 44.1910] },
+    { id: 'ibb', name: 'أوقاف محافظة إب', coordinates: [13.9669, 44.1833] },
+    { id: 'taiz', name: 'أوقاف محافظة تعز', coordinates: [13.5794, 44.0206] },
+    { id: 'dhamar', name: 'أوقاف محافظة ذمار', coordinates: [14.5422, 44.4078] },
+    { id: 'hodeidah', name: 'أوقاف محافظة الحديدة', coordinates: [14.7979, 42.9530] },
+    { id: 'hadramout', name: 'أوقاف محافظة حضرموت', coordinates: [14.5147, 49.1242] },
+    { id: 'custom', name: 'منطقة مخصصة (إدخال يدوي)', coordinates: null }
   ];
 
   // أنواع الملفات المدعومة
@@ -591,7 +605,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       {uploadMode === 'url' ? (
         <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
           <label className="block text-sm text-slate-700 mb-3">
-            <span className="block mb-1">أدخل رابط الملف الخارجي</span>
+            <span className="block mb-1">أدخل رابط Google Drive أو رابط خارجي</span>
             <input
               type="url"
               value={remoteUrl}
@@ -607,10 +621,10 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
             disabled={isUploading || !remoteUrl.trim()}
             className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            بدء التحميل من الرابط
+            استيراد من Google Drive / رابط خارجي
           </button>
           <p className="text-xs text-slate-500 mt-3">
-            في هذا الوضع، سيقوم السيرفر بسحب الملف مباشرة من المصدر الخارجي بدلاً من رفعه من جهازك.
+            في هذا الوضع، سيقوم السيرفر بسحب الملف من Google Drive أو المصدر الخارجي بدون رفعه من جهازك.
           </p>
         </div>
       ) : (

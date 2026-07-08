@@ -41,10 +41,10 @@ class LandAgent(BaseAgent):
                 message_type="ACTION",
                 content=f"اكتُشفت الطبقات التالية: {', '.join(layer_names)}. سيتم تصنيفها جميعاً." 
             )
-            non_land = {"buildings", "water", "roads"}
+            non_land = {"buildings", "water", "roads", "unknown", "مبنى", "وادي", "شارع", "وغيرها"}
             for layer in layers:
                 layer_id = layer["layer_id"]
-                layer_name = (layer.get("layer_name") or "").lower()
+                layer_name = (layer.get("layer_name") or "").strip().lower()
                 area_sqm = layer["area_sq_meters"]
 
                 # تخطّي الطبقات التي نعرف أنها ليست أراضٍ
