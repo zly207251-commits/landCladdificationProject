@@ -171,9 +171,13 @@ class ImageTiler:
                     transform = None
                     crs_str = None
                     transformer = None
-                    if use_geo_metadata and src.crs and src.transform:
+                    if use_geo_metadata and src.transform:
                         transform = src.transform.to_gdal()
-                        crs_str = str(src.crs)
+                        crs_str = str(src.crs) if src.crs else None
+                        if not crs_str:
+                            task = memory.get_task(task_id)
+                            task_meta = task.get("metadata") or {} if task else {}
+                            crs_str = task_meta.get("geospatial_crs") or "EPSG:32638"
                         if crs_str != 'EPSG:4326':
                             try:
                                 from pyproj import Transformer
@@ -196,7 +200,27 @@ class ImageTiler:
                     failed_tiles = 0
                     total_area_sqm = 0.0
 
-                    for idx, ptile in enumerate(pending_tiles):
+                    # Pre-initialize color classifier to prevent thread race conditions
+                    if segmenter and not hasattr(segmenter, 'color_classifier'):
+                        try:
+                            from land_classifier import LandColorClassifier
+                            segmenter.color_classifier = LandColorClassifier()
+                        except Exception:
+                            pass
+
+                    import threading
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    import psutil
+
+                    db_lock = threading.Lock()
+                    reader_lock = threading.Lock()
+
+                    # Capping max workers at 3 to prevent OOM in resource-constrained environments
+                    max_workers = min(3, max(1, psutil.cpu_count(logical=False) or 1))
+                    log_msg("INFO", f"بدء تشغيل معالجة الأجزاء بالتوازي باستخدام ThreadPool. عدد الخيوط: {max_workers}")
+
+                    def process_single_tile(ptile):
+                        nonlocal failed_tiles, successful_tiles, total_area_sqm
                         tile_row = ptile['tile_row']
                         tile_col = ptile['tile_col']
                         y_start = ptile['y_start']
@@ -208,20 +232,19 @@ class ImageTiler:
                         w_height = y_end - y_start
                         
                         current_mem = get_memory_usage_gb()
-                        log_msg("ACTION", f"قراءة ومعالجة الجزء ({tile_row},{tile_col})... الذاكرة المستخدمة: {current_mem:.2f} GB")
                         
                         # تفعيل المعالجة البديلة السريعة عند زيادة استهلاك الذاكرة عن 12.0 GB
-                        original_use_sam = None
-                        if current_mem > 12.0:
-                            log_msg("WARNING", f"الذاكرة منخفضة للغاية ({current_mem:.2f} GB)! سيتم استخدام المعالجة البديلة السريعة للجزء ({tile_row},{tile_col}) لتفادي تجاوز سعة الخادم.")
-                            original_use_sam = segmenter.use_sam
-                            original_fail_fast = segmenter.fail_fast
-                            segmenter.use_sam = False
-                            segmenter.fail_fast = False
+                        if current_mem > 12.0 and getattr(segmenter, 'use_sam', False):
+                            with db_lock:
+                                if getattr(segmenter, 'use_sam', False):
+                                    log_msg("WARNING", f"الذاكرة منخفضة للغاية ({current_mem:.2f} GB)! سيتم استخدام المعالجة البديلة السريعة لتفادي تجاوز سعة الخادم.")
+                                    segmenter.use_sam = False
+                                    segmenter.fail_fast = False
 
                         try:
-                            window = Window(col_off=x_start, row_off=y_start, width=w_width, height=w_height)
-                            bands = src.read(window=window)
+                            with reader_lock:
+                                window = Window(col_off=x_start, row_off=y_start, width=w_width, height=w_height)
+                                bands = src.read(window=window)
                             
                             if bands.ndim == 3:
                                 if bands.shape[0] >= 3:
@@ -242,13 +265,12 @@ class ImageTiler:
                             # معالجة الجزء باستخدام SAM أو البديل السريع
                             segments = segmenter.segment_image(tile_image)
                             
+                            local_area = 0.0
                             if segments:
-                                all_polygons = []
                                 for seg in segments:
                                     poly_list = seg.get('polygons', [])
                                     if isinstance(poly_list, list):
                                         for poly in poly_list:
-                                            # التصحيح والتحويل الجغرافي وحساب المساحة
                                             adjusted_poly = self.adjust_coordinates([poly], y_start, x_start)[0]
                                             
                                             if transform is not None and len(transform) == 6:
@@ -264,58 +286,57 @@ class ImageTiler:
                                             if area_sqm < 10.0:
                                                 continue
                                                 
-                                            total_area_sqm += area_sqm
+                                            local_area += area_sqm
                                             feddan, qirat, sahm = self._convert_to_agricultural_units(area_sqm)
                                             
-                                            # الحفظ الفوري في قاعدة البيانات
+                                            # الحفظ الفوري في قاعدة البيانات مع قفل حماية
                                             label = seg.get('label', 'unknown')
                                             score = seg.get('score', 1.0)
-                                            memory.add_task_layer(
-                                                task_id=task_id,
-                                                layer_name=label,
-                                                polygons=[adjusted_poly],
-                                                geo_polygons=[geo_poly],
-                                                area_sq_meters=area_sqm,
-                                                area_feddan=feddan,
-                                                area_qirat=qirat,
-                                                area_sahm=sahm,
-                                                metadata={"description": f"قطعة من الجزء ({tile_row},{tile_col})", "score": score}
-                                            )
+                                            with db_lock:
+                                                memory.add_task_layer(
+                                                    task_id=task_id,
+                                                    layer_name=label,
+                                                    polygons=[adjusted_poly],
+                                                    geo_polygons=[geo_poly],
+                                                    area_sq_meters=area_sqm,
+                                                    area_feddan=feddan,
+                                                    area_qirat=qirat,
+                                                    area_sahm=sahm,
+                                                    metadata={"description": f"قطعة من الجزء ({tile_row},{tile_col})", "score": score}
+                                                )
                                 log_msg("RESULT", f"✅ الجزء ({tile_row},{tile_col}) مكتمل وتم حفظ القطع.")
                             else:
                                 log_msg("RESULT", f"⚠️ الجزء ({tile_row},{tile_col}) لم ينتج مضلعات.")
                             
                             # تحديث حالة المربع كـ COMPLETED
-                            memory.update_tile_status(task_id, tile_row, tile_col, 'COMPLETED')
-                            successful_tiles += 1
-                            
+                            with db_lock:
+                                memory.update_tile_status(task_id, tile_row, tile_col, 'COMPLETED')
+                                successful_tiles += 1
+                                total_area_sqm += local_area
+                                
                         except Exception as e:
-                            failed_tiles += 1
-                            memory.update_tile_status(task_id, tile_row, tile_col, 'FAILED')
+                            with db_lock:
+                                failed_tiles += 1
+                                memory.update_tile_status(task_id, tile_row, tile_col, 'FAILED')
                             log_msg("ERROR", f"❌ فشل معالجة الجزء ({tile_row},{tile_col}): {e}")
-                            
-                        # استعادة الإعدادات الأصلية لـ SAM إذا تم تغييرها
-                        if original_use_sam is not None:
-                            segmenter.use_sam = original_use_sam
-                            segmenter.fail_fast = original_fail_fast
 
-                        # تنظيف وحذف المتغيرات من الذاكرة
-                        if 'tile_image' in locals():
-                            del tile_image
-                        if 'bands' in locals():
-                            del bands
-                        if 'segments' in locals():
-                            del segments
-                            
-                        import gc
-                        gc.collect()
-                        
-                        try:
-                            import torch
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                        except ImportError:
-                            pass
+                    # Submit all tasks to ThreadPool
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [executor.submit(process_single_tile, ptile) for ptile in pending_tiles]
+                        for future in as_completed(futures):
+                            try:
+                                future.result()
+                            except Exception as e:
+                                log_msg("ERROR", f"حدث خطأ غير متوقع أثناء معالجة الخيط: {e}")
+
+                    import gc
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except ImportError:
+                        pass
                             
         except Exception as e:
             log_msg("ERROR", f"حدث خطأ جوهري أثناء قراءة الصورة أو المعالجة: {e}")

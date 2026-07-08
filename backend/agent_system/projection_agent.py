@@ -123,6 +123,8 @@ class ProjectionAgent(BaseAgent):
         if isinstance(geo_metadata, dict):
             transform = geo_metadata.get('transform')
             crs_str = geo_metadata.get('crs')
+            if not crs_str:
+                crs_str = task_meta.get('geospatial_crs')
             if crs_str and crs_str != 'EPSG:4326':
                 try:
                     from pyproj import Transformer
@@ -206,10 +208,10 @@ class ProjectionAgent(BaseAgent):
             return None
         try:
             with rasterio.open(image_path) as ds:
-                if ds.crs is None or ds.transform is None:
+                if ds.transform is None:
                     return None
                 return {
-                    'crs': str(ds.crs),
+                    'crs': str(ds.crs) if ds.crs else None,
                     'transform': ds.transform.to_gdal(),
                     'width': ds.width,
                     'height': ds.height,

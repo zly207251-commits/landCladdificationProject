@@ -39,6 +39,21 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPointsPerSide, setSamPointsPerSide] = useState('16');
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
+  const [tfwContent, setTfwContent] = useState<string | null>(null);
+
+  const handleTfwFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setTfwContent(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string || '';
+      setTfwContent(text);
+    };
+    reader.readAsText(file);
+  };
 
   const CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8MB per chunk to avoid proxy/server 413 limits
   const UPLOAD_CONCURRENCY = 4; // concurrent chunk uploads
@@ -93,6 +108,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
           formData.append('sam_points_per_side', metadata.sam_points_per_side);
           formData.append('sam_pred_iou_thresh', metadata.sam_pred_iou_thresh);
           formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
+          if (metadata.tfw_content) {
+            formData.append('tfw_content', metadata.tfw_content);
+          }
 
           const xhr = new XMLHttpRequest();
           xhr.open('POST', `${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk`);
@@ -261,7 +279,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       sam_min_mask_region_area: samMinMaskRegionArea,
       sam_points_per_side: samPointsPerSide,
       sam_pred_iou_thresh: samPredIoUThresh,
-      sam_stability_score_thresh: samStabilityScoreThresh
+      sam_stability_score_thresh: samStabilityScoreThresh,
+      tfw_content: tfwContent
     };
 
     const uploadId = buildUploadId();
@@ -513,6 +532,16 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 onChange={(e) => setGeoCrs(e.target.value)}
                 disabled={isUploading}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </label>
+            <label className="block text-sm text-slate-700 mt-4">
+              <span className="block mb-1">ملف الإحداثيات المصاحب (TFW / World File) - اختياري</span>
+              <input
+                type="file"
+                accept=".tfw,.jgw,.pgw,.wld"
+                onChange={handleTfwFileChange}
+                disabled={isUploading}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </label>
             <p className="text-xs text-slate-500 mt-3">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { EXPORT_FORMATS } from '@/app/lib/map-config';
+import { EXPORT_FORMATS, API_CONFIG } from '@/app/lib/map-config';
 
 interface ExportCenterProps {
   jobId?: string;
@@ -105,28 +105,36 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
     setIsExporting(true);
     setExportProgress(0);
 
+    const step = 20;
     const interval = setInterval(() => {
       setExportProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
           setTimeout(() => {
             selectedFormats.forEach((format) => {
-              const formatInfo = EXPORT_FORMATS[format as keyof typeof EXPORT_FORMATS];
-              let content = '';
-              let mimeType = 'application/json';
-              let filename = `export_${jobId || Date.now()}${formatInfo.extension}`;
-
-              if (format === 'geojson') {
-                content = buildGeoJSON(layers);
-                mimeType = 'application/geo+json';
-              } else if (format === 'csv') {
-                content = buildCSV(layers);
-                mimeType = 'text/csv';
+              if (jobId) {
+                // تصدير حقيقي وموثق من الخادم الخلفي
+                const base = API_CONFIG.baseURL || '/api';
+                const exportUrl = `${base}/tasks/${jobId}/export?format=${format}`;
+                window.open(exportUrl, '_blank');
               } else {
-                content = JSON.stringify({ metadata: reportData?.metadata ?? {}, layers }, null, 2);
-              }
+                // Fallback للطرف الأمامي فقط
+                const formatInfo = EXPORT_FORMATS[format as keyof typeof EXPORT_FORMATS];
+                let content = '';
+                let mimeType = 'application/json';
+                let filename = `export_${Date.now()}${formatInfo.extension}`;
 
-              downloadFile(filename, content, mimeType);
+                if (format === 'geojson') {
+                  content = buildGeoJSON(layers);
+                  mimeType = 'application/geo+json';
+                } else if (format === 'csv') {
+                  content = buildCSV(layers);
+                  mimeType = 'text/csv';
+                } else {
+                  content = JSON.stringify({ metadata: reportData?.metadata ?? {}, layers }, null, 2);
+                }
+                downloadFile(filename, content, mimeType);
+              }
             });
 
             setIsExporting(false);
@@ -139,9 +147,9 @@ export default function ExportCenter({ jobId, availableLayers = [], reportData, 
 
           return 100;
         }
-        return prev + 10;
+        return prev + step;
       });
-    }, 200);
+    }, 150);
   };
 
   // إدارة اختيار الصيغ

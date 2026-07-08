@@ -175,6 +175,11 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           terrainProvider: new Cesium.EllipsoidTerrainProvider(),
         });
 
+        // التأكد من أن قوقل ماب هو طبقة الخلفية الافتراضية وإزالة الطبقات الافتراضية الأخرى
+        const layers = viewerRef.current.imageryLayers;
+        layers.removeAll();
+        layers.addImageryProvider(imageryProvider);
+
         viewerRef.current.scene.globe.enableLighting = true;
         viewerRef.current.camera.flyTo({
           destination: Cesium.Cartesian3.fromDegrees(lon, lat, 4_000_000),

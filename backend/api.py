@@ -12,6 +12,9 @@ import json
 import mimetypes
 import importlib.util
 import re
+import tempfile
+import zipfile
+import shutil
 from threading import Thread
 from pydantic import BaseModel
 from PIL import Image
@@ -19,6 +22,7 @@ import requests
 import mercantile
 from pyproj import Transformer
 from urllib.parse import urlparse, parse_qs, unquote, urljoin, urlencode
+from typing import Optional, List, Dict, Any
 
 rasterio_spec = importlib.util.find_spec('rasterio')
 if rasterio_spec is not None:
@@ -358,17 +362,13 @@ def run_agent_swarm_background(task_id: str, image_path: str):
     print(f"[backend] existing_task at start: {existing_task}")
     
     try:
-        memory.ensure_task_record(task_id, image_path, metadata={"source": "background_worker"}, status="RUNNING")
-        
-        # Debug: Verify after ensure
-        verify = memory.get_task(task_id)
-        print(f"[backend] verify after ensure_task_record: {verify}")
-        
-        memory.update_task_status(task_id, "RUNNING")
+        existing_meta = existing_task.get("metadata") or {} if existing_task else {}
+        merged_meta = {**existing_meta, "source": "background_worker"}
+        memory.ensure_task_record(task_id, image_path, metadata=merged_meta, status="RUNNING")
         
         # Debug: Verify after status update
-        verify2 = memory.get_task(task_id)
-        print(f"[backend] verify after update_task_status: {verify2}")
+        verify = memory.get_task(task_id)
+        print(f"[backend] verify after update_task_status: {verify}")
         # بناء وتشغيل الرسم البياني للوكلاء
         compiled_graph = create_swarm_graph(memory, message_bus, get_segmenter())
         initial_state = {
@@ -395,8 +395,10 @@ def run_agent_swarm_background(task_id: str, image_path: str):
             print(f"[backend] Failed to publish error message: {pub_err}")
         
         try:
-            memory.ensure_task_record(task_id, image_path, metadata={"failure_reason": str(e)[:200]}, status="FAILED")
-            memory.update_task_status(task_id, "FAILED")
+            cur_task = memory.get_task(task_id)
+            cur_meta = cur_task.get("metadata") or {} if cur_task else {}
+            merged_failure_meta = {**cur_meta, "failure_reason": str(e)[:200]}
+            memory.ensure_task_record(task_id, image_path, metadata=merged_failure_meta, status="FAILED")
         except Exception as mem_err:
             print(f"[backend] Failed to update task status: {mem_err}")
         
@@ -443,7 +445,8 @@ async def upload_task_chunk(
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
     sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM'),
+    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
     if chunk_index < 0 or chunk_index >= total_chunks:
         raise HTTPException(status_code=400, detail="فهرس الجزء غير صالح")
@@ -465,7 +468,8 @@ async def upload_task_chunk(
         "sam_points_per_side": sam_points_per_side,
         "sam_pred_iou_thresh": sam_pred_iou_thresh,
         "sam_stability_score_thresh": sam_stability_score_thresh,
-        "total_chunks": total_chunks
+        "total_chunks": total_chunks,
+        "tfw_content": tfw_content
     })
 
     uploaded_chunks = set(metadata.get("uploaded_chunks", []))
@@ -528,6 +532,19 @@ async def complete_task_chunk_upload(
     try:
         merge_chunk_files(upload_id, temp_file_path, total_chunks)
         cleanup_chunk_upload(upload_id)
+        
+        # كتابة ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
+        tfw_content = metadata.get("tfw_content")
+        if tfw_content:
+            base_path, ext = os.path.splitext(temp_file_path)
+            world_ext_map = {
+                '.tif': '.tfw', '.tiff': '.tfw', '.geotiff': '.tfw',
+                '.jpg': '.jgw', '.jpeg': '.jgw',
+                '.png': '.pgw'
+            }
+            world_ext = world_ext_map.get(ext.lower(), '.tfw')
+            with open(base_path + world_ext, "w", encoding="utf-8") as wf:
+                wf.write(tfw_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")
 
@@ -703,7 +720,8 @@ async def analyze_image_with_agents(
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(8, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
     sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM'),
+    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
     """
     نقطة انطلاق التحليل:
@@ -747,6 +765,18 @@ async def analyze_image_with_agents(
             pass
         raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
         
+    # حفظ ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
+    if tfw_content:
+        base_path, ext = os.path.splitext(temp_file_path)
+        world_ext_map = {
+            '.tif': '.tfw', '.tiff': '.tfw', '.geotiff': '.tfw',
+            '.jpg': '.jgw', '.jpeg': '.jgw',
+            '.png': '.pgw'
+        }
+        world_ext = world_ext_map.get(ext.lower(), '.tfw')
+        with open(base_path + world_ext, "w", encoding="utf-8") as wf:
+            wf.write(tfw_content)
+        
     # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
     task_metadata = {
         "image_type": image_type,
@@ -760,6 +790,7 @@ async def analyze_image_with_agents(
         "sam_points_per_side": sam_points_per_side,
         "sam_pred_iou_thresh": sam_pred_iou_thresh,
         "sam_stability_score_thresh": sam_stability_score_thresh,
+        "tfw_content": tfw_content
     }
 
     if image_type == 'geospatial' and use_geo_metadata:
@@ -1070,6 +1101,177 @@ def get_task_report(task_id: str):
         "map_center": map_center,
         "map_zoom": map_zoom
     }
+
+@app.get("/tasks/{task_id}/export", summary="تصدير طبقات المهمة بصيغ جغرافية مختلفة")
+def export_task_layers(task_id: str, format: str = "geojson"):
+    """
+    يصدر الطبقات الجغرافية المستخرجة للمهمة بصيغ: geojson, kml, kmz, shp, csv
+    """
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+        
+    layers = memory.get_task_layers(task_id)
+    if not layers:
+        raise HTTPException(status_code=400, detail="لا توجد طبقات جغرافية لهذه المهمة لتصديرها.")
+        
+    format = format.lower()
+    
+    # 1. تصدير GeoJSON
+    if format == "geojson":
+        features = []
+        for ly in layers:
+            layer_name = ly.get('layer_name', 'unknown')
+            metadata = ly.get('metadata') or {}
+            geo_polygons = ly.get('geo_polygons') or []
+            for polygon in geo_polygons:
+                ring = polygon
+                if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                    ring = polygon[0]
+                norm_ring = [[float(pt[0]), float(pt[1])] for pt in ring if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                if len(norm_ring) >= 3:
+                    if norm_ring[0] != norm_ring[-1]:
+                        norm_ring.append(norm_ring[0])
+                    features.append({
+                        "type": "Feature",
+                        "properties": {
+                            "layer_name": layer_name,
+                            "area_sq_meters": ly["area_sq_meters"],
+                            "area_agricultural": f"{ly['area_feddan']} فدان، {ly['area_qirat']} قيراط، {ly['area_sahm']:.2f} سهم",
+                            "metadata": metadata
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [norm_ring]
+                        }
+                    })
+        geojson_data = {"type": "FeatureCollection", "features": features}
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".geojson")
+        with open(temp_file.name, "w", encoding="utf-8") as f:
+            json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+        return FileResponse(temp_file.name, media_type="application/geo+json", filename=f"export_{task_id}.geojson")
+
+    # 2. تصدير KML / KMZ
+    elif format in ["kml", "kmz"]:
+        try:
+            import simplekml
+            kml = simplekml.Kml(name=f"Layers for {task_id}")
+            
+            styles = {
+                "buildings": {"color": "7f0000ff", "width": 2},
+                "roads": {"color": "7f00ffff", "width": 3},
+                "vegetation": {"color": "7f00ff00", "width": 2},
+                "agricultural": {"color": "7f00ff00", "width": 2},
+                "water_bodies": {"color": "7fff0000", "width": 2},
+            }
+            
+            for ly in layers:
+                layer_name = ly.get('layer_name', 'unknown')
+                geo_polygons = ly.get('geo_polygons') or []
+                fol = kml.newfolder(name=layer_name)
+                
+                for idx, polygon in enumerate(geo_polygons):
+                    ring = polygon
+                    if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                        ring = polygon[0]
+                    coords = [(float(pt[0]), float(pt[1])) for pt in ring if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                    if len(coords) >= 3:
+                        if coords[0] != coords[-1]:
+                            coords.append(coords[0])
+                        pol = fol.newpolygon(name=f"{layer_name}_{idx}")
+                        pol.outerboundaryis = coords
+                        
+                        style_cfg = styles.get(layer_name.lower())
+                        if style_cfg:
+                            pol.style.linestyle.color = style_cfg["color"]
+                            pol.style.linestyle.width = style_cfg["width"]
+                            pol.style.polystyle.color = style_cfg["color"]
+                        else:
+                            pol.style.linestyle.color = "7fcccccc"
+                            pol.style.polystyle.color = "33cccccc"
+                            
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{format}")
+            if format == "kml":
+                kml.save(temp_file.name)
+                return FileResponse(temp_file.name, media_type="application/vnd.google-earth.kml+xml", filename=f"export_{task_id}.kml")
+            else:
+                kml.savekmz(temp_file.name)
+                return FileResponse(temp_file.name, media_type="application/vnd.google-earth.kmz", filename=f"export_{task_id}.kmz")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف KML/KMZ: {str(e)}")
+
+    # 3. تصدير Shapefile (Zipped SHP folder)
+    elif format == "shp":
+        try:
+            import geopandas as gpd
+            from shapely.geometry import Polygon as ShapelyPolygon
+            
+            features = []
+            for ly in layers:
+                layer_name = ly.get('layer_name', 'unknown')
+                geo_polygons = ly.get('geo_polygons') or []
+                for polygon in geo_polygons:
+                    ring = polygon
+                    if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                        ring = polygon[0]
+                    coords = [(float(pt[0]), float(pt[1])) for pt in ring if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                    if len(coords) >= 3:
+                        if coords[0] != coords[-1]:
+                            coords.append(coords[0])
+                        geom = ShapelyPolygon(coords)
+                        features.append({
+                            "geometry": geom,
+                            "layer_name": layer_name,
+                            "area_sqm": float(ly["area_sq_meters"]),
+                            "feddan": int(ly["area_feddan"]),
+                            "qirat": int(ly["area_qirat"]),
+                            "sahm": float(ly["area_sahm"])
+                        })
+            
+            if not features:
+                raise ValueError("لا توجد مضلعات صالحة لتصديرها كـ Shapefile")
+                
+            gdf = gpd.GeoDataFrame(features, crs="EPSG:4326")
+            
+            temp_dir = tempfile.mkdtemp()
+            shp_base_name = f"export_{task_id}"
+            shp_path = os.path.join(temp_dir, f"{shp_base_name}.shp")
+            gdf.to_file(shp_path, driver="ESRI Shapefile", encoding="utf-8")
+            
+            zip_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            with zipfile.ZipFile(zip_file.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        zipf.write(file_path, arcname=file)
+                        
+            shutil.rmtree(temp_dir)
+            return FileResponse(zip_file.name, media_type="application/zip", filename=f"export_{task_id}.zip")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف Shapefile: {str(e)}")
+
+    # 4. تصدير CSV (إحداثيات المضلعات)
+    elif format == "csv":
+        import csv
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+        with open(temp_file.name, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["layer_name", "area_sq_meters", "area_agricultural", "polygon_index", "longitude", "latitude"])
+            for ly in layers:
+                layer_name = ly.get('layer_name', 'unknown')
+                geo_polygons = ly.get('geo_polygons') or []
+                area_agri = f"{ly['area_feddan']} فدان، {ly['area_qirat']} قيراط، {ly['area_sahm']:.2f} سهم"
+                for idx, polygon in enumerate(geo_polygons):
+                    ring = polygon
+                    if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                        ring = polygon[0]
+                    for pt in ring:
+                        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                            writer.writerow([layer_name, ly["area_sq_meters"], area_agri, idx, pt[0], pt[1]])
+        return FileResponse(temp_file.name, media_type="text/csv", filename=f"export_{task_id}.csv")
+        
+    else:
+        raise HTTPException(status_code=400, detail=f"صيغة التصدير '{format}' غير مدعومة.")
 
 @app.get("/tasks/{task_id}/image", summary="4. جلب صورة المهمة الأصلية")
 def get_task_image(task_id: str):
