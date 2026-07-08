@@ -995,25 +995,23 @@ def get_task_status(task_id: str):
         # إحصائيات تقدم القطع (tiles)
         tile_stats = {"total": 0, "completed": 0, "failed": 0, "pending": 0}
         try:
-            import sqlite3
-            db_path = getattr(memory, 'db_path', None)
-            if db_path:
-                with sqlite3.connect(db_path) as conn:
-                    total = conn.execute(
-                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=?", (task_id,)
-                    ).fetchone()[0]
-                    completed = conn.execute(
-                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=? AND status='COMPLETED'", (task_id,)
-                    ).fetchone()[0]
-                    failed = conn.execute(
-                        "SELECT COUNT(*) FROM task_tiles WHERE task_id=? AND status='FAILED'", (task_id,)
-                    ).fetchone()[0]
-                    tile_stats = {
-                        "total": total,
-                        "completed": completed,
-                        "failed": failed,
-                        "pending": total - completed - failed
-                    }
+            from agent_system.db_config import get_db_connection, format_query
+            db_path = getattr(memory, 'db_path', 'shared_memory.db')
+            with get_db_connection(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(format_query("SELECT COUNT(*) FROM task_tiles WHERE task_id = %s"), (task_id,))
+                total = cursor.fetchone()[0]
+                cursor.execute(format_query("SELECT COUNT(*) FROM task_tiles WHERE task_id = %s AND status = 'COMPLETED'"), (task_id,))
+                completed = cursor.fetchone()[0]
+                cursor.execute(format_query("SELECT COUNT(*) FROM task_tiles WHERE task_id = %s AND status = 'FAILED'"), (task_id,))
+                failed = cursor.fetchone()[0]
+                
+                tile_stats = {
+                    "total": total,
+                    "completed": completed,
+                    "failed": failed,
+                    "pending": total - completed - failed
+                }
         except Exception as tile_err:
             print(f"[api] tile_stats error: {tile_err}")
 
