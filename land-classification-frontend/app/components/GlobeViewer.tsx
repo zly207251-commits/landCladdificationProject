@@ -101,6 +101,17 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [tileZoom, setTileZoom] = useState<number>(17);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
   const [activePanel, setActivePanel] = useState<string | null>(null);
+  
+  interface GISLayer {
+    id: string;
+    name: string;
+    type: string;
+    visible: boolean;
+    dataSource: any;
+  }
+  const [gisLayers, setGisLayers] = useState<GISLayer[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const createImageryProvider = (providerId: string) => {
     const Cesium = (window as any).Cesium;
@@ -434,6 +445,143 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     });
   };
 
+  const uuidv4_local = () => Math.random().toString(36).substring(2, 9);
+
+  const loadShpjs = (): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).shp) {
+        resolve((window as any).shp);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/shpjs/4.0.4/shp.min.js";
+      script.async = true;
+      script.onload = () => resolve((window as any).shp);
+      script.onerror = () => reject(new Error("Failed to load shpjs library"));
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>, fileList?: FileList) => {
+    let files: File[] = [];
+    
+    // Support drop event
+    if ('dataTransfer' in e && e.dataTransfer?.files) {
+      files = Array.from(e.dataTransfer.files);
+    } 
+    // Support file picker change event
+    else if ('target' in e && (e.target as HTMLInputElement).files) {
+      files = Array.from((e.target as HTMLInputElement).files || []);
+    }
+
+    if (files.length === 0) return;
+
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) {
+      setImportError("محرك الخرائط غير جاهز بعد.");
+      return;
+    }
+
+    setImportLoading(true);
+    setImportError(null);
+
+    for (const file of files) {
+      try {
+        const name = file.name;
+        const extension = name.split('.').pop()?.toLowerCase();
+        let dataSource: any = null;
+
+        if (extension === 'geojson' || extension === 'json') {
+          const text = await file.text();
+          const jsonData = JSON.parse(text);
+          dataSource = await Cesium.GeoJsonDataSource.load(jsonData, {
+            stroke: Cesium.Color.YELLOW,
+            fill: Cesium.Color.YELLOW.withAlpha(0.25),
+            strokeWidth: 3
+          });
+        } else if (extension === 'kml' || extension === 'kmz') {
+          const url = URL.createObjectURL(file);
+          dataSource = await Cesium.KmlDataSource.load(url, {
+            camera: viewerRef.current.camera,
+            canvas: viewerRef.current.canvas
+          });
+          
+          // Override KML solid styling to make polygons translucent
+          const entities = dataSource.entities.values;
+          for (const entity of entities) {
+            if (entity.polygon) {
+              if (entity.polygon.material && entity.polygon.material.color) {
+                const originalColor = entity.polygon.material.color.getValue(Cesium.JulianDate.now());
+                if (originalColor) {
+                  // Keep the KML's original color but set alpha to 0.35 for transparency
+                  entity.polygon.material.color = new Cesium.ConstantProperty(
+                    Cesium.Color.fromAlpha(originalColor, 0.35)
+                  );
+                }
+              } else {
+                entity.polygon.material = new Cesium.ColorMaterialProperty(
+                  Cesium.Color.YELLOW.withAlpha(0.35)
+                );
+              }
+              entity.polygon.outline = new Cesium.ConstantProperty(true);
+              if (!entity.polygon.outlineColor) {
+                entity.polygon.outlineColor = new Cesium.ConstantProperty(Cesium.Color.YELLOW);
+              }
+            }
+          }
+        } else if (extension === 'zip') {
+          const shp = await loadShpjs();
+          const arrayBuffer = await file.arrayBuffer();
+          const geojson = await shp(arrayBuffer);
+          dataSource = await Cesium.GeoJsonDataSource.load(geojson, {
+            stroke: Cesium.Color.AQUA,
+            fill: Cesium.Color.AQUA.withAlpha(0.25),
+            strokeWidth: 3
+          });
+        } else {
+          throw new Error("صيغة الملف غير مدعومة. يرجى اختيار GeoJSON أو KML/KMZ أو Shapefile ZIP.");
+        }
+
+        if (dataSource) {
+          viewerRef.current.dataSources.add(dataSource);
+          viewerRef.current.zoomTo(dataSource);
+          
+          const newLayer: GISLayer = {
+            id: uuidv4_local(),
+            name: file.name,
+            type: extension || 'unknown',
+            visible: true,
+            dataSource: dataSource
+          };
+          setGisLayers(prev => [...prev, newLayer]);
+        }
+      } catch (err: any) {
+        console.error(err);
+        setImportError(`فشل استيراد الملف ${file.name}: ${err.message || err}`);
+      }
+    }
+    setImportLoading(false);
+  };
+
+  const toggleLayerVisibility = (layerId: string) => {
+    setGisLayers(prev => prev.map(ly => {
+      if (ly.id === layerId) {
+        const nextVisible = !ly.visible;
+        ly.dataSource.show = nextVisible;
+        return { ...ly, visible: nextVisible };
+      }
+      return ly;
+    }));
+  };
+
+  const removeLayer = (layerId: string) => {
+    const layer = gisLayers.find(ly => ly.id === layerId);
+    if (layer && viewerRef.current) {
+      viewerRef.current.dataSources.remove(layer.dataSource);
+    }
+    setGisLayers(prev => prev.filter(ly => ly.id !== layerId));
+  };
+
   return (
     <div ref={wrapperRef} className="w-full h-full min-h-screen relative overflow-hidden shadow-2xl bg-slate-950">
       {/* خريطة Cesium ملء الشاشة */}
@@ -589,6 +737,18 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         >
           💬
         </button>
+
+        <button
+          onClick={() => setActivePanel(activePanel === 'import' ? null : 'import')}
+          title="استيراد ملفات GIS جغرافية (KML, GeoJSON, Shapefile)"
+          className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-semibold shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-105 border ${
+            activePanel === 'import' 
+              ? 'bg-amber-600 text-white border-amber-500 hover:bg-amber-750' 
+              : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
+          }`}
+        >
+          📂
+        </button>
       </div>
 
       {/* لوحات الإعدادات العائمة جنب الأيقونات */}
@@ -698,6 +858,81 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               <div className="flex items-center gap-2 text-[11px] text-blue-400 pt-1">
                 <span className="animate-spin text-xs">🌀</span>
                 <span>جاري إعداد محرك الخرائط...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activePanel === 'import' && (
+        <div className="absolute top-20 right-20 z-50 w-[340px] bg-slate-900/95 backdrop-blur-lg border border-white/10 text-white shadow-2xl rounded-2xl flex flex-col p-4 space-y-4 pointer-events-auto max-h-[80vh] overflow-y-auto">
+          <div className="flex justify-between items-center border-b border-white/10 pb-2">
+            <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">📂 استيراد ملفات GIS جغرافية</h4>
+            <button onClick={() => setActivePanel(null)} className="text-slate-400 hover:text-white transition-colors">✕</button>
+          </div>
+          
+          {/* Dropzone zone / File picker */}
+          <div 
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); handleImportFile(e); }}
+            className="border-2 border-dashed border-white/20 hover:border-amber-500/50 rounded-xl p-6 text-center cursor-pointer transition-all duration-200 hover:bg-white/5 relative group"
+          >
+            <input 
+              type="file" 
+              multiple 
+              accept=".kml,.kmz,.geojson,.json,.zip"
+              onChange={handleImportFile}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+            <div className="text-2xl mb-1 text-slate-400 group-hover:scale-110 transition-transform">📥</div>
+            <p className="text-xs font-semibold text-slate-300">اسحب الملفات هنا أو اضغط للاختيار</p>
+            <p className="text-[10px] text-slate-400 mt-1">يدعم KML, KMZ, GeoJSON, Shapefile (ZIP)</p>
+          </div>
+
+          {importLoading && (
+            <div className="flex items-center justify-center gap-2 text-xs text-amber-400">
+              <span className="animate-spin">🌀</span>
+              <span>جاري تحليل وإسقاط الملف...</span>
+            </div>
+          )}
+
+          {importError && (
+            <div className="p-2.5 rounded-xl bg-red-950/40 border border-red-500/30 text-[11px] text-red-300 leading-relaxed">
+              ⚠️ {importError}
+            </div>
+          )}
+
+          {/* List of imported layers */}
+          <div className="space-y-2.5">
+            <h5 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">📦 الطبقات المستوردة ({gisLayers.length})</h5>
+            {gisLayers.length === 0 ? (
+              <p className="text-[11px] text-slate-500 text-center py-2">لا توجد طبقات جغرافية مستوردة حالياً.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                {gisLayers.map((ly) => (
+                  <div key={ly.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/40 border border-white/5 hover:border-white/10 transition-colors">
+                    <div className="flex flex-col min-w-0 pr-1">
+                      <span className="text-[11px] font-semibold text-slate-200 truncate" title={ly.name}>{ly.name}</span>
+                      <span className="text-[9px] text-slate-400 uppercase font-mono">{ly.type}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button 
+                        onClick={() => toggleLayerVisibility(ly.id)}
+                        className={`p-1.5 rounded-md transition-colors ${ly.visible ? 'text-amber-400 hover:bg-white/5' : 'text-slate-500 hover:bg-white/5'}`}
+                        title={ly.visible ? "إخفاء الطبقة" : "إظهار الطبقة"}
+                      >
+                        {ly.visible ? '👁️' : '👁️‍🗨️'}
+                      </button>
+                      <button 
+                        onClick={() => removeLayer(ly.id)}
+                        className="p-1.5 rounded-md text-red-400 hover:text-red-300 hover:bg-white/5 transition-colors"
+                        title="حذف الطبقة"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
