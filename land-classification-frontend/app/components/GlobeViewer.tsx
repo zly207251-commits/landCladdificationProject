@@ -87,11 +87,8 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<any>(null);
-  const selectionRef = useRef<HTMLDivElement | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [selecting, setSelecting] = useState(false);
-  const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null);
-  const [selectionRect, setSelectionRect] = useState<DOMRect | null>(null);
   const [exportLink, setExportLink] = useState<string | null>(null);
   const [lat, setLat] = useState(24.7136);
   const [lon, setLon] = useState(46.6753);
@@ -112,6 +109,11 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [gisLayers, setGisLayers] = useState<GISLayer[]>([]);
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+
+  const startCoordsRef = useRef<{ lon: number; lat: number } | null>(null);
+  const currentCoordsRef = useRef<{ lon: number; lat: number } | null>(null);
+  const currentSelectionEntityRef = useRef<any>(null);
+  const [geographicBBox, setGeographicBBox] = useState<{ minLon: number; maxLon: number; minLat: number; maxLat: number } | null>(null);
 
   const createImageryProvider = (providerId: string) => {
     const Cesium = (window as any).Cesium;
@@ -249,64 +251,94 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [taskId]);
 
-  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler
+  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler وجسم المضلع الجغرافي ثلاثي الأبعاد
   useEffect(() => {
-    const container = containerRef.current;
     const Cesium = (window as any).Cesium;
-    if (!viewerRef.current || !Cesium || !container) return;
+    if (!viewerRef.current || !Cesium) return;
     const canvas = viewerRef.current.scene.canvas;
     if (!canvas) return;
-
-    const getPointer = (position: any) => {
-      const rect = container.getBoundingClientRect();
-      return {
-        x: position.x - rect.left,
-        y: position.y - rect.top
-      };
-    };
 
     const handler = new Cesium.ScreenSpaceEventHandler(canvas);
 
     handler.setInputAction((movement: any) => {
       if (!selecting) return;
-      const pos = getPointer(movement.position);
-      setStartPoint(pos);
-      if (selectionRef.current) {
-        selectionRef.current.style.left = `${pos.x}px`;
-        selectionRef.current.style.top = `${pos.y}px`;
-        selectionRef.current.style.width = `0px`;
-        selectionRef.current.style.height = `0px`;
-        selectionRef.current.style.display = 'block';
+      
+      const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
+        movement.position,
+        viewerRef.current.scene.globe.ellipsoid
+      );
+      
+      if (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lonDeg = Cesium.Math.toDegrees(cartographic.longitude);
+        const latDeg = Cesium.Math.toDegrees(cartographic.latitude);
+        
+        startCoordsRef.current = { lon: lonDeg, lat: latDeg };
+        currentCoordsRef.current = { lon: lonDeg, lat: latDeg };
+
+        // إزالة مستطيل التحديد القديم إن وجد
+        if (currentSelectionEntityRef.current) {
+          viewerRef.current.entities.remove(currentSelectionEntityRef.current);
+        }
+
+        // إنشاء مستطيل جغرافي تفاعلي ينحني مع الكرة الأرضية
+        currentSelectionEntityRef.current = viewerRef.current.entities.add({
+          name: "منطقة قص جغرافية",
+          rectangle: {
+            coordinates: new Cesium.CallbackProperty(() => {
+              if (!startCoordsRef.current || !currentCoordsRef.current) {
+                return Cesium.Rectangle.fromDegrees(0, 0, 0, 0);
+              }
+              const minLon = Math.min(startCoordsRef.current.lon, currentCoordsRef.current.lon);
+              const maxLon = Math.max(startCoordsRef.current.lon, currentCoordsRef.current.lon);
+              const minLat = Math.min(startCoordsRef.current.lat, currentCoordsRef.current.lat);
+              const maxLat = Math.max(startCoordsRef.current.lat, currentCoordsRef.current.lat);
+              return Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+            }, false),
+            material: Cesium.Color.YELLOW.withAlpha(0.2),
+            outline: true,
+            outlineColor: Cesium.Color.YELLOW,
+            outlineWidth: 3
+          }
+        });
       }
     }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
 
     handler.setInputAction((movement: any) => {
-      if (!selecting || !startPoint || !selectionRef.current) return;
-      const pos = getPointer(movement.endPosition || movement.position);
-      const left = Math.min(startPoint.x, pos.x);
-      const top = Math.min(startPoint.y, pos.y);
-      const width = Math.abs(startPoint.x - pos.x);
-      const height = Math.abs(startPoint.y - pos.y);
-      selectionRef.current.style.left = `${left}px`;
-      selectionRef.current.style.top = `${top}px`;
-      selectionRef.current.style.width = `${width}px`;
-      selectionRef.current.style.height = `${height}px`;
+      if (!selecting || !startCoordsRef.current) return;
+      
+      const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
+        movement.endPosition || movement.position,
+        viewerRef.current.scene.globe.ellipsoid
+      );
+      
+      if (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        currentCoordsRef.current = {
+          lon: Cesium.Math.toDegrees(cartographic.longitude),
+          lat: Cesium.Math.toDegrees(cartographic.latitude)
+        };
+      }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     handler.setInputAction((movement: any) => {
-      if (!selecting || !startPoint || !selectionRef.current) return;
-      const rect = selectionRef.current.getBoundingClientRect();
-      const parentRect = container.getBoundingClientRect();
-      const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
-      setSelectionRect(relativeRect);
+      if (!selecting || !startCoordsRef.current || !currentCoordsRef.current) return;
+      
+      const minLon = Math.min(startCoordsRef.current.lon, currentCoordsRef.current.lon);
+      const maxLon = Math.max(startCoordsRef.current.lon, currentCoordsRef.current.lon);
+      const minLat = Math.min(startCoordsRef.current.lat, startCoordsRef.current.lat);
+      const maxLat = Math.max(startCoordsRef.current.lat, startCoordsRef.current.lat);
+      
+      setGeographicBBox({ minLon, maxLon, minLat, maxLat });
       setSelecting(false);
-      setStartPoint(null);
+      startCoordsRef.current = null;
+      currentCoordsRef.current = null;
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     return () => {
       handler.destroy();
     };
-  }, [selecting, startPoint, isLoaded]);
+  }, [selecting, isLoaded]);
 
   // تعطيل تحكم الكاميرا في Cesium أثناء التحديد لمنع السحب
   useEffect(() => {
@@ -341,37 +373,13 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     }
   };
 
-  const getLonLatFromScreen = (x: number, y: number) => {
-    const Cesium = (window as any).Cesium;
-    if (!viewerRef.current || !Cesium) return null;
-    const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
-      new Cesium.Cartesian2(x, y),
-      viewerRef.current.scene.globe.ellipsoid
-    );
-    if (!cartesian) return null;
-    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-    return {
-      lon: Cesium.Math.toDegrees(cartographic.longitude),
-      lat: Cesium.Math.toDegrees(cartographic.latitude)
-    };
-  };
-
   const saveSelectionAsTiff = async () => {
     try {
-      if (!selectionRect) {
+      if (!geographicBBox) {
         throw new Error('يرجى تحديد منطقة للقص أولاً.');
       }
 
-      const topLeft = getLonLatFromScreen(selectionRect.x, selectionRect.y);
-      const bottomRight = getLonLatFromScreen(selectionRect.x + selectionRect.width, selectionRect.y + selectionRect.height);
-      if (!topLeft || !bottomRight) {
-        throw new Error('تعذر تحويل الحقول المحددة إلى إحداثيات جغرافية. حاول اختيار منطقة أقرب إلى سطح الكرة الأرضية.');
-      }
-
-      const minLon = Math.min(topLeft.lon, bottomRight.lon);
-      const maxLon = Math.max(topLeft.lon, bottomRight.lon);
-      const minLat = Math.min(topLeft.lat, bottomRight.lat);
-      const maxLat = Math.max(topLeft.lat, bottomRight.lat);
+      const { minLon, maxLon, minLat, maxLat } = geographicBBox;
       const base = API_CONFIG.baseURL || 'http://localhost:8000';
 
       if (taskId) {
@@ -587,61 +595,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       {/* خريطة Cesium ملء الشاشة */}
       <div className="w-full h-full" ref={containerRef} style={{ minHeight: '100vh' }} />
 
-      {/* Overlay لالتقاط أحداث الماوس أثناء وضع التحديد */}
-      <div
-        onMouseDown={(ev) => {
-          console.debug('overlay mousedown', { selecting });
-          if (!selecting) return;
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (!rect) return;
-          const x = ev.clientX - rect.left;
-          const y = ev.clientY - rect.top;
-          setStartPoint({ x, y });
-          if (selectionRef.current) {
-            selectionRef.current.style.left = `${x}px`;
-            selectionRef.current.style.top = `${y}px`;
-            selectionRef.current.style.width = `0px`;
-            selectionRef.current.style.height = `0px`;
-            selectionRef.current.style.display = 'block';
-            selectionRef.current.style.pointerEvents = 'none';
-          }
-        }}
-        onMouseMove={(ev) => {
-          if (!selecting || !startPoint || !selectionRef.current) return;
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (!rect) return;
-          const x = ev.clientX - rect.left;
-          const y = ev.clientY - rect.top;
-          const left = Math.min(startPoint.x, x);
-          const top = Math.min(startPoint.y, y);
-          const width = Math.abs(x - startPoint.x);
-          const height = Math.abs(y - startPoint.y);
-          selectionRef.current.style.left = `${left}px`;
-          selectionRef.current.style.top = `${top}px`;
-          selectionRef.current.style.width = `${width}px`;
-          selectionRef.current.style.height = `${height}px`;
-        }}
-        onMouseUp={(ev) => {
-          if (!selecting || !startPoint || !selectionRef.current) return;
-          const rect = selectionRef.current.getBoundingClientRect();
-          const parentRect = containerRef.current?.getBoundingClientRect();
-          if (!parentRect) return;
-          const relativeRect = new DOMRect(rect.left - parentRect.left, rect.top - parentRect.top, rect.width, rect.height);
-          setSelectionRect(relativeRect);
-          setSelecting(false);
-          setStartPoint(null);
-        }}
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 45,
-          background: 'transparent',
-          pointerEvents: selecting ? 'auto' : 'none'
-        }}
-      />
+
 
       {/* شريط الأدوات العلوي العائم */}
       <div className="absolute top-4 left-4 right-4 z-[60] flex justify-between items-center pointer-events-none">
@@ -665,10 +619,24 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           
           <button 
             onClick={() => { 
-              setSelecting(!selecting); 
-              setSelectionRect(null); 
-              setExportLink(null); 
-              if (!selecting && selectionRef.current) selectionRef.current.style.display='none'; 
+              if (selecting) {
+                // Cancel selection: remove entity and reset box
+                if (currentSelectionEntityRef.current && viewerRef.current) {
+                  viewerRef.current.entities.remove(currentSelectionEntityRef.current);
+                  currentSelectionEntityRef.current = null;
+                }
+                setGeographicBBox(null);
+                setSelecting(false);
+              } else {
+                // Start selection: remove old entity if any and reset BBox
+                if (currentSelectionEntityRef.current && viewerRef.current) {
+                  viewerRef.current.entities.remove(currentSelectionEntityRef.current);
+                  currentSelectionEntityRef.current = null;
+                }
+                setGeographicBBox(null);
+                setExportLink(null);
+                setSelecting(true);
+              }
             }} 
             className={`rounded-xl px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors border ${
               selecting 
@@ -679,7 +647,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
             {selecting ? '❌ إلغاء التحديد' : '✂️ قص منطقة'}
           </button>
           
-          {selectionRect && (
+          {geographicBBox && (
             <button 
               onClick={saveSelectionAsTiff} 
               className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
@@ -939,8 +907,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         </div>
       )}
 
-      {/* عنصر التحديد البصري */}
-      <div ref={selectionRef} style={{ display: 'none', position: 'absolute', border: '2px dashed #ffde59', background: 'rgba(255,222,89,0.08)', pointerEvents: 'none', zIndex: 50 }} />
+
     </div>
   );
 }
