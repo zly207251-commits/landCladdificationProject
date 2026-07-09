@@ -11,19 +11,24 @@ const NASA_GIBS_TILE_MATRIX = "GoogleMapsCompatible";
 
 const IMAGERY_PROVIDERS = [
   {
-    id: 'osm',
-    label: 'OpenStreetMap',
-    description: 'خريطة الشوارع العالمية',
+    id: 'google_sat',
+    label: 'Google Satellite (Clean)',
+    description: 'صور أقمار صناعية نقية ونظيفة بدون شوارع وأسماء',
+  },
+  {
+    id: 'google_hybrid',
+    label: 'Google Hybrid (with Labels)',
+    description: 'صور الأقمار الصناعية مدمجة مع شبكة الشوارع والتسميات',
   },
   {
     id: 'esri',
     label: 'Esri World Imagery',
-    description: 'صور أقمار صناعية عالية الدقة',
+    description: 'صور أقمار صناعية عالية الدقة ونظيفة',
   },
   {
-    id: 'google',
-    label: 'Google Satellite',
-    description: 'Google Satellite عبر رابط   للـ tiles',
+    id: 'osm',
+    label: 'OpenStreetMap',
+    description: 'خريطة الشوارع العالمية',
   },
   {
     id: 'gibs_truecolor',
@@ -93,7 +98,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [lat, setLat] = useState(24.7136);
   const [lon, setLon] = useState(46.6753);
   const [date, setDate] = useState(formatDate(new Date()));
-  const [selectedProvider, setSelectedProvider] = useState<string>('google');
+  const [selectedProvider, setSelectedProvider] = useState<string>('google_sat');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
   const [tileZoom, setTileZoom] = useState<number>(17);
   const [statusMessage, setStatusMessage] = useState<string>("تحميل واجهة العرض...");
@@ -131,10 +136,16 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           credit: 'Esri World Imagery',
           maximumLevel: 19,
         });
-      case 'google':
+      case 'google_sat':
+        return new Cesium.UrlTemplateImageryProvider({
+          url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+          credit: 'Google Satellite',
+          maximumLevel: 20,
+        });
+      case 'google_hybrid':
         return new Cesium.UrlTemplateImageryProvider({
           url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-          credit: 'Google Satellite',
+          credit: 'Google Hybrid',
           maximumLevel: 20,
         });
       case 'gibs_truecolor':
@@ -396,20 +407,22 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
             return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
           case 'esri':
             return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-          case 'google':
+          case 'google_sat':
+            return 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}';
+          case 'google_hybrid':
             return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
           case 'gibs_truecolor':
             return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
           case 'gibs_viirs':
             return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
           default:
-            return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+            return 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}';
         }
       };
 
       const tile_template = getTileTemplate();
 
-      if (selectedProvider === 'google') {
+      if (selectedProvider === 'google_sat' || selectedProvider === 'google_hybrid') {
         const ok = window.confirm('مصدر الصور Google قد يكون محدود الترخيص — هل تضمن أنك مخوّل لاستخدامه لهذا الغرض؟ اضغط موافق للمتابعة.');
         if (!ok) return;
       }
