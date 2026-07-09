@@ -37,6 +37,7 @@ class ProjectionAgent(BaseAgent):
         pixel_scale = float(task_meta.get("pixel_scale_meters", 0.5))
         ref_lat = float(task_meta.get("ref_latitude", 15.3694))
         ref_lon = float(task_meta.get("ref_longitude", 44.1910))
+        use_geo_metadata = bool(task_meta.get('use_geo_metadata', False))
         
         self.segmenter.apply_parameters(
             use_fallback=bool(task_meta.get('sam_use_fallback', self.segmenter.use_fallback)),
