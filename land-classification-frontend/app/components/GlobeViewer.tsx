@@ -215,13 +215,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                   strokeWidth: 1,
                 });
                 viewerRef.current.dataSources.add(dataSource);
-                const center = taskReport.map_center;
-                if (center) {
-                  viewerRef.current.camera.flyTo({
-                    destination: Cesium.Cartesian3.fromDegrees(center[1], center[0], 2500),
-                    orientation: { pitch: Cesium.Math.toRadians(-45) },
-                  });
-                }
+                viewerRef.current.zoomTo(dataSource);
                 setStatusMessage("تم تحميل طبقة المعالم بنجاح.");
               } else {
                 setStatusMessage("لا توجد طبقة معالم للمهمة المحددة.");
@@ -266,10 +260,9 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     handler.setInputAction((movement: any) => {
       if (!selecting) return;
       
-      const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
-        movement.position,
-        viewerRef.current.scene.globe.ellipsoid
-      );
+      const ray = viewerRef.current.camera.getPickRay(movement.position);
+      const cartesian = viewerRef.current.scene.globe.pick(ray, viewerRef.current.scene) || 
+                        viewerRef.current.scene.camera.pickEllipsoid(movement.position, viewerRef.current.scene.globe.ellipsoid);
       
       if (cartesian) {
         polygonPointsRef.current.push(cartesian);
