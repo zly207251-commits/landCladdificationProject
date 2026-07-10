@@ -1617,36 +1617,51 @@ def crop_from_tiles(
             py = (tile.y - min_y) * tile_size
             canvas.paste(img, (px, py))
 
-        # Compute bounds in EPSG:3857 by transforming tile corner bounds
+        # Transform target user bounding box from EPSG:4326 to EPSG:3857
         transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
-        lefts = []
-        rights = []
-        bottoms = []
-        tops = []
-        for tx in (min_x, max_x + 1):
-            for ty in (min_y, max_y + 1):
-                b = mercantile.bounds(tx, ty, zoom)
-                # bounds returns west,south,east,north in lon/lat
-                west, south, east, north = b.west, b.south, b.east, b.north
-                x1, y1 = transformer.transform(west, south)
-                x2, y2 = transformer.transform(east, north)
-                lefts.append(min(x1, x2))
-                rights.append(max(x1, x2))
-                bottoms.append(min(y1, y2))
-                tops.append(max(y1, y2))
+        x_min, y_min = transformer.transform(min_lon_val, min_lat_val)
+        x_max, y_max = transformer.transform(max_lon_val, max_lat_val)
 
-        left = min(lefts)
-        right = max(rights)
-        bottom = min(bottoms)
-        top = max(tops)
+        # Get exact Web Mercator bounds of stitched tiles using mercantile.xy_bounds
+        b_min = mercantile.xy_bounds(min_x, max_y, zoom)
+        b_max = mercantile.xy_bounds(max_x, min_y, zoom)
+        
+        tile_left = b_min.left
+        tile_bottom = b_min.bottom
+        tile_right = b_max.right
+        tile_top = b_max.top
 
-        # Compute transform
-        res_x = (right - left) / canvas_w
-        res_y = (top - bottom) / canvas_h
-        out_transform = rasterio.transform.from_origin(left, top, res_x, res_y)
+        res_x = (tile_right - tile_left) / canvas_w
+        res_y = (tile_top - tile_bottom) / canvas_h
 
-        # Convert canvas to numpy array and write as GeoTIFF (RGB)
-        arr = np.array(canvas)
+        # Compute exact pixel offsets corresponding to user selected bounding box
+        px_left = max(0, int(round((x_min - tile_left) / res_x)))
+        px_right = min(canvas_w, int(round((x_max - tile_left) / res_x)))
+        px_top = max(0, int(round((tile_top - y_max) / res_y)))
+        px_bottom = min(canvas_h, int(round((tile_top - y_min) / res_y)))
+
+        # Ensure valid crop box dimensions (at least 1 pixel wide/high)
+        if px_right <= px_left:
+            px_right = px_left + 1
+        if px_bottom <= px_top:
+            px_bottom = px_top + 1
+
+        # Crop the canvas to the user's exact bounding box
+        cropped_canvas = canvas.crop((px_left, px_top, px_right, px_bottom))
+        out_w, out_h = cropped_canvas.size
+
+        # Compute exact Web Mercator bounds of cropped area
+        left = tile_left + px_left * res_x
+        top = tile_top - px_top * res_y
+        right = tile_left + px_right * res_x
+        bottom = tile_top - px_bottom * res_y
+
+        res_x_cropped = (right - left) / out_w
+        res_y_cropped = (top - bottom) / out_h
+        out_transform = rasterio.transform.from_origin(left, top, res_x_cropped, res_y_cropped)
+
+        # Convert cropped canvas to numpy array and write as GeoTIFF (RGB)
+        arr = np.array(cropped_canvas)
         # arr shape: (h,w,4) RGBA -> take RGB, ignore alpha
         if arr.ndim == 3 and arr.shape[2] >= 3:
             rgb = arr[:, :, :3]
@@ -1663,8 +1678,8 @@ def crop_from_tiles(
             'driver': 'GTiff',
             'dtype': 'uint8',
             'count': rgb.shape[0],
-            'height': canvas_h,
-            'width': canvas_w,
+            'height': out_h,
+            'width': out_w,
             'transform': out_transform,
             'crs': 'EPSG:3857',
             'compress': 'LZW',
