@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>منطقة تجربة - تعز (KML)</name>
+    <Placemark>
+      <name>مربع تجربة تعز</name>
+      <description>ملف KML تجريبي للإسقاط الجغرافي</description>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              44.018,13.577,0
+              44.023,13.577,0
+              44.023,13.582,0
+              44.018,13.582,0
+              44.018,13.577,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

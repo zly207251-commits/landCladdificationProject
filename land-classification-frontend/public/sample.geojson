@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "منطقة تجربة - تعز"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [44.018, 13.577],
+            [44.023, 13.577],
+            [44.023, 13.582],
+            [44.018, 13.582],
+            [44.018, 13.577]
+          ]
+        ]
+      }
+    }
+  ]
+}
