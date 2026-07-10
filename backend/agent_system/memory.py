@@ -541,6 +541,20 @@ class SharedMemory:
             })
         return layers
 
+    def update_feature_analysis(self, feature_id: str, analysis_results: Dict[str, Any]) -> bool:
+        """تحديث نتائج التحليل وتصنيفات المعلم الجغرافي بشكل آمن وقاعدة بيانات مستدامة."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    self._qp("UPDATE spatial_features SET analysis_results = %s WHERE feature_id = %s"),
+                    (json.dumps(analysis_results), feature_id)
+                )
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"[SharedMemory] update_feature_analysis ERROR for {feature_id}: {e}")
+            return False
+
     # --- عمليات إدارة الرسائل والمراسلات (Messaging) ---
     
     def log_message(self, task_id: str, sender: str, message_type: str, content: str, payload: Optional[Dict[str, Any]] = None) -> int:

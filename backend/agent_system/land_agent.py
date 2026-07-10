@@ -81,22 +81,14 @@ class LandAgent(BaseAgent):
                 
                 desc = f"{local_class} | نوع التربة: {soil_type} | علاقة المياه: {water_relation}"
                 
-                # تحديث حقل الميتا والوصف للطبقة الجغرافية في قاعدة بيانات SQLite
-                with memory._get_connection() as conn:
-                    current_meta = layer["metadata"] or {}
-                    current_meta["local_classification"] = {
+                # تحديث نتائج التحليل والتصنيف في الذاكرة المشتركة بشكل جذري وآمن
+                feature_id = layer.get("feature_id")
+                if feature_id:
+                    memory.update_feature_analysis(feature_id, {
                         "class_name": local_class,
                         "soil_type": soil_type,
                         "water_relation": water_relation
-                    }
-                    current_meta["description"] = f"{current_meta.get('description', '')} - {desc}"
-                    
-                    import json
-                    conn.execute(
-                        "UPDATE task_layers SET metadata = ? WHERE layer_id = ?",
-                        (json.dumps(current_meta), layer_id)
-                    )
-                    conn.commit()
+                    })
                 
                 self.message_bus.publish(
                     task_id=task_id,
