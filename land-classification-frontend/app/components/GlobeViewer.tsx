@@ -113,6 +113,9 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const startCoordsRef = useRef<{ lon: number; lat: number } | null>(null);
   const currentCoordsRef = useRef<{ lon: number; lat: number } | null>(null);
   const currentSelectionEntityRef = useRef<any>(null);
+  const polygonPointsRef = useRef<any[]>([]);
+  const polygonEntitiesRef = useRef<any[]>([]);
+  const [polygonPoints, setPolygonPoints] = useState<any[]>([]);
   const [geographicBBox, setGeographicBBox] = useState<{ minLon: number; maxLon: number; minLat: number; maxLat: number } | null>(null);
 
   const createImageryProvider = (providerId: string) => {
@@ -251,7 +254,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     };
   }, [taskId]);
 
-  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler وجسم المضلع الجغرافي ثلاثي الأبعاد
+  // أحداث التحديد باستخدام Cesium ScreenSpaceEventHandler وتحديد النقاط للمضلع الجغرافي
   useEffect(() => {
     const Cesium = (window as any).Cesium;
     if (!viewerRef.current || !Cesium) return;
@@ -269,71 +272,42 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       );
       
       if (cartesian) {
-        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-        const lonDeg = Cesium.Math.toDegrees(cartographic.longitude);
-        const latDeg = Cesium.Math.toDegrees(cartographic.latitude);
-        
-        startCoordsRef.current = { lon: lonDeg, lat: latDeg };
-        currentCoordsRef.current = { lon: lonDeg, lat: latDeg };
+        polygonPointsRef.current.push(cartesian);
+        setPolygonPoints([...polygonPointsRef.current]);
 
-        // إزالة مستطيل التحديد القديم إن وجد
-        if (currentSelectionEntityRef.current) {
-          viewerRef.current.entities.remove(currentSelectionEntityRef.current);
-        }
-
-        // إنشاء مستطيل جغرافي تفاعلي ينحني مع الكرة الأرضية
-        currentSelectionEntityRef.current = viewerRef.current.entities.add({
-          name: "منطقة قص جغرافية",
-          rectangle: {
-            coordinates: new Cesium.CallbackProperty(() => {
-              if (!startCoordsRef.current || !currentCoordsRef.current) {
-                return Cesium.Rectangle.fromDegrees(0, 0, 0, 0);
-              }
-              const minLon = Math.min(startCoordsRef.current.lon, currentCoordsRef.current.lon);
-              const maxLon = Math.max(startCoordsRef.current.lon, currentCoordsRef.current.lon);
-              const minLat = Math.min(startCoordsRef.current.lat, currentCoordsRef.current.lat);
-              const maxLat = Math.max(startCoordsRef.current.lat, currentCoordsRef.current.lat);
-              return Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
-            }, false),
-            material: Cesium.Color.YELLOW.withAlpha(0.2),
-            outline: true,
-            outlineColor: Cesium.Color.YELLOW,
-            outlineWidth: 3
+        // رسم النقطة الجديدة على الخريطة
+        const pointEntity = viewerRef.current.entities.add({
+          name: `نقطة مضلع ${polygonPointsRef.current.length}`,
+          position: cartesian,
+          point: {
+            color: Cesium.Color.RED,
+            pixelSize: 8,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY // إبقاء النقطة ظاهرة دائماً فوق التضاريس
           }
         });
-      }
-    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+        polygonEntitiesRef.current.push(pointEntity);
 
-    handler.setInputAction((movement: any) => {
-      if (!selecting || !startCoordsRef.current) return;
-      
-      const cartesian = viewerRef.current.scene.camera.pickEllipsoid(
-        movement.endPosition || movement.position,
-        viewerRef.current.scene.globe.ellipsoid
-      );
-      
-      if (cartesian) {
-        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-        currentCoordsRef.current = {
-          lon: Cesium.Math.toDegrees(cartographic.longitude),
-          lat: Cesium.Math.toDegrees(cartographic.latitude)
-        };
+        // إنشاء أو تحديث المضلع عندما تصبح النقاط 3 أو أكثر
+        if (polygonPointsRef.current.length >= 3) {
+          if (!currentSelectionEntityRef.current) {
+            currentSelectionEntityRef.current = viewerRef.current.entities.add({
+              name: "منطقة قص مضلعة",
+              polygon: {
+                hierarchy: new Cesium.CallbackProperty(() => {
+                  return new Cesium.PolygonHierarchy(polygonPointsRef.current);
+                }, false),
+                material: Cesium.Color.YELLOW.withAlpha(0.25),
+                outline: true,
+                outlineColor: Cesium.Color.YELLOW,
+                outlineWidth: 3
+              }
+            });
+          }
+        }
       }
-    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-
-    handler.setInputAction((movement: any) => {
-      if (!selecting || !startCoordsRef.current || !currentCoordsRef.current) return;
-      
-      const minLon = Math.min(startCoordsRef.current.lon, currentCoordsRef.current.lon);
-      const maxLon = Math.max(startCoordsRef.current.lon, currentCoordsRef.current.lon);
-      const minLat = Math.min(startCoordsRef.current.lat, startCoordsRef.current.lat);
-      const maxLat = Math.max(startCoordsRef.current.lat, startCoordsRef.current.lat);
-      
-      setGeographicBBox({ minLon, maxLon, minLat, maxLat });
-      setSelecting(false);
-      startCoordsRef.current = null;
-      currentCoordsRef.current = null;
-    }, Cesium.ScreenSpaceEventType.LEFT_UP);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     return () => {
       handler.destroy();
@@ -371,6 +345,49 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     } else {
       try { await document.exitFullscreen(); } catch (e) { console.warn(e); }
     }
+  };
+
+  const cancelSelection = () => {
+    if (viewerRef.current) {
+      // Remove points entities
+      for (const ent of polygonEntitiesRef.current) {
+        viewerRef.current.entities.remove(ent);
+      }
+      polygonEntitiesRef.current = [];
+      
+      // Remove polygon entity
+      if (currentSelectionEntityRef.current) {
+        viewerRef.current.entities.remove(currentSelectionEntityRef.current);
+        currentSelectionEntityRef.current = null;
+      }
+    }
+    polygonPointsRef.current = [];
+    setPolygonPoints([]);
+    setGeographicBBox(null);
+    setExportLink(null);
+    setSelecting(false);
+  };
+
+  const finishPolygonSelection = () => {
+    const Cesium = (window as any).Cesium;
+    if (!Cesium || polygonPointsRef.current.length < 3) return;
+    
+    const lons = polygonPointsRef.current.map(p => {
+      const carto = Cesium.Cartographic.fromCartesian(p);
+      return Cesium.Math.toDegrees(carto.longitude);
+    });
+    const lats = polygonPointsRef.current.map(p => {
+      const carto = Cesium.Cartographic.fromCartesian(p);
+      return Cesium.Math.toDegrees(carto.latitude);
+    });
+    
+    const minLon = Math.min(...lons);
+    const maxLon = Math.max(...lons);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    
+    setGeographicBBox({ minLon, maxLon, minLat, maxLat });
+    setSelecting(false);
   };
 
   const saveSelectionAsTiff = async () => {
@@ -620,21 +637,9 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           <button 
             onClick={() => { 
               if (selecting) {
-                // Cancel selection: remove entity and reset box
-                if (currentSelectionEntityRef.current && viewerRef.current) {
-                  viewerRef.current.entities.remove(currentSelectionEntityRef.current);
-                  currentSelectionEntityRef.current = null;
-                }
-                setGeographicBBox(null);
-                setSelecting(false);
+                cancelSelection();
               } else {
-                // Start selection: remove old entity if any and reset BBox
-                if (currentSelectionEntityRef.current && viewerRef.current) {
-                  viewerRef.current.entities.remove(currentSelectionEntityRef.current);
-                  currentSelectionEntityRef.current = null;
-                }
-                setGeographicBBox(null);
-                setExportLink(null);
+                cancelSelection();
                 setSelecting(true);
               }
             }} 
@@ -644,16 +649,33 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                 : 'bg-slate-900/90 text-white border-white/10 hover:bg-slate-800'
             }`}
           >
-            {selecting ? '❌ إلغاء التحديد' : '✂️ قص منطقة'}
+            {selecting ? `❌ إلغاء (${polygonPoints.length} نقاط)` : '✂️ قص منطقة'}
           </button>
           
-          {geographicBBox && (
+          {selecting && polygonPoints.length >= 3 && (
             <button 
-              onClick={saveSelectionAsTiff} 
-              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+              onClick={finishPolygonSelection} 
+              className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white border border-blue-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
             >
-              💾 حفظ المقطع كـ TIFF
+              ✅ إنهاء التحديد ({polygonPoints.length} نقاط)
             </button>
+          )}
+          
+          {geographicBBox && (
+            <>
+              <button 
+                onClick={saveSelectionAsTiff} 
+                className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+              >
+                💾 حفظ المقطع كـ TIFF
+              </button>
+              <button 
+                onClick={cancelSelection} 
+                className="rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-4 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-colors"
+              >
+                🧹 مسح التحديد
+              </button>
+            </>
           )}
           
           {exportLink && (
