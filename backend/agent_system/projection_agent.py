@@ -257,12 +257,16 @@ class ProjectionAgent(BaseAgent):
         
         orig_width, orig_height = 0, 0
         img_preview = None
+        ds_transform = None
+        ds_crs_str = None
         
         if rasterio is not None:
             try:
                 with rasterio.open(image_path) as ds:
                     orig_width = ds.width
                     orig_height = ds.height
+                    ds_transform = ds.transform
+                    ds_crs_str = str(ds.crs) if ds.crs else None
                     
                     max_dim = 2048
                     if orig_width > max_dim or orig_height > max_dim:
@@ -290,7 +294,7 @@ class ProjectionAgent(BaseAgent):
                         elif img_preview.shape[2] == 4:
                             img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGBA2BGR)
                         
-                        # تحويل RGB إلى BGR لـ OpenCV
+                        # Convert RGB to BGR for OpenCV
                         img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGB2BGR)
             except Exception as e:
                 print(f"[ProjectionAgent] Error reading preview with rasterio: {e}")
@@ -333,12 +337,12 @@ class ProjectionAgent(BaseAgent):
             return
 
         COLOR_MAP = {
-            'agricultural': (34, 139, 34),  # أخضر
-            'buildings': (0, 0, 255),       # أحمر
-            'water': (255, 0, 0),           # أزرق
-            'roads': (200, 200, 200),       # رمادي
-            'arid': (19, 69, 139),          # بني
-            'unknown': (0, 255, 255),       # أصفر
+            'agricultural': (34, 139, 34),  # Green
+            'buildings': (0, 0, 255),       # Red
+            'water': (255, 0, 0),           # Blue
+            'roads': (200, 200, 200),       # Gray
+            'arid': (19, 69, 139),          # Brown
+            'unknown': (0, 255, 255),       # Yellow
         }
 
         overlay = img_preview.copy()
@@ -347,17 +351,58 @@ class ProjectionAgent(BaseAgent):
             label = layer.get('layer_name', 'unknown').lower()
             color = COLOR_MAP.get(label, COLOR_MAP['unknown'])
             
-            polygons = layer.get('polygons', [])
-            if isinstance(polygons, str):
+            geo_polygons = layer.get('geo_polygons', [])
+            if isinstance(geo_polygons, str):
                 try:
                     import json
-                    polygons = json.loads(polygons)
+                    geo_polygons = json.loads(geo_polygons)
                 except Exception:
-                    polygons = []
+                    geo_polygons = []
                     
-            for poly in polygons:
-                if not isinstance(poly, list) or len(poly) < 3:
-                    continue
+            polygons_to_draw = []
+            if geo_polygons and ds_transform is not None:
+                transformer = None
+                if ds_crs_str and ds_crs_str != 'EPSG:4326':
+                    try:
+                        from pyproj import Transformer
+                        transformer = Transformer.from_crs('EPSG:4326', ds_crs_str, always_xy=True)
+                    except Exception:
+                        pass
+                
+                inv_transform = ~ds_transform
+                for geo_poly in geo_polygons:
+                    coords_list = geo_poly
+                    if len(coords_list) > 0 and isinstance(coords_list[0], list) and isinstance(coords_list[0][0], list):
+                        coords_list = coords_list[0]
+                        
+                    poly_pixels = []
+                    for pt in coords_list:
+                        if len(pt) < 2:
+                            continue
+                        lon_val, lat_val = pt[0], pt[1]
+                        if transformer is not None:
+                            x_img, y_img = transformer.transform(lon_val, lat_val)
+                        else:
+                            x_img, y_img = lon_val, lat_val
+                        
+                        px_col, px_row = inv_transform * (x_img, y_img)
+                        poly_pixels.append([px_col, px_row])
+                        
+                    if len(poly_pixels) >= 3:
+                        polygons_to_draw.append(poly_pixels)
+            else:
+                polygons = layer.get('polygons', [])
+                if isinstance(polygons, str):
+                    try:
+                        import json
+                        polygons = json.loads(polygons)
+                    except Exception:
+                        polygons = []
+                for poly in polygons:
+                    if isinstance(poly, list) and len(poly) >= 3:
+                        polygons_to_draw.append(poly)
+                        
+            for poly in polygons_to_draw:
                 scaled_poly = np.array([
                     [int(pt[0] * scale_x), int(pt[1] * scale_y)] for pt in poly
                 ], dtype=np.int32)
