@@ -111,6 +111,15 @@ class ProjectionAgent(BaseAgent):
             memory.update_task_status(task_id, "FAILED")
             return {"next_agent": "end"}
 
+        # Auto-detect if image is geospatial by inspecting the file itself
+        if image_path.lower().endswith(('.tif', '.tiff', '.geotiff')) and task_meta.get('geo_metadata') is None:
+            detected_metadata = self._load_geo_metadata(image_path)
+            if detected_metadata and detected_metadata.get('transform') and detected_metadata.get('crs'):
+                task_meta['image_type'] = 'geospatial'
+                task_meta['use_geo_metadata'] = True
+                task_meta['geo_metadata'] = detected_metadata
+                print(f"[ProjectionAgent] Auto-promoted task {task_id} to geospatial from image inspect.")
+
         use_geo_metadata = bool(task_meta.get('use_geo_metadata', False))
         geo_metadata = task_meta.get('geo_metadata') if task_meta.get('image_type') == 'geospatial' else None
 

@@ -943,10 +943,16 @@ async def analyze_image_with_agents(
         "tfw_content": tfw_content
     }
 
-    if image_type == 'geospatial' and use_geo_metadata:
+    # Auto-detect GeoTIFF metadata if the file ends with .tif/.tiff/.geotiff, regardless of user input
+    if temp_file_path.lower().endswith(('.tif', '.tiff', '.geotiff')):
         geo_metadata = get_geotiff_metadata(temp_file_path)
-        if geo_metadata:
+        if geo_metadata and geo_metadata.get('transform') and geo_metadata.get('crs'):
+            image_type = 'geospatial'
+            use_geo_metadata = True
+            task_metadata['image_type'] = 'geospatial'
+            task_metadata['use_geo_metadata'] = True
             task_metadata['geo_metadata'] = geo_metadata
+            print(f"[api] Auto-detected valid GeoTIFF metadata for {temp_file_path}. Promoted to geospatial.")
 
     print(f"[api] analyze_image_with_agents request task_id={task_id} file={file.filename} db={getattr(memory, 'db_path', '<no-db>')}")
     created = memory.create_task(task_id, temp_file_path, task_metadata)
