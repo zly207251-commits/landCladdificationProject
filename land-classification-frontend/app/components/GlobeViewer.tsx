@@ -96,6 +96,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const currentSelectionEntityRef = useRef<any>(null);
   const polygonPointsRef = useRef<any[]>([]);
   const polygonEntitiesRef = useRef<any[]>([]);
+  const userLocationEntityRef = useRef<any>(null);
 
   // State definitions
   const [isLoaded, setIsLoaded] = useState(false);
@@ -148,6 +149,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
           credit: 'Esri World Imagery',
           maximumLevel: 19,
+          tilingScheme: new Cesium.WebMercatorTilingScheme()
         });
       case 'google':
         // Display hybrid google maps (lyrs=y) with streets/places for navigation
@@ -155,18 +157,21 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
           credit: 'Google Satellite',
           maximumLevel: 20,
+          tilingScheme: new Cesium.WebMercatorTilingScheme()
         });
       case 'gibs_truecolor':
         return new Cesium.UrlTemplateImageryProvider({
           url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${NASA_GIBS_DEFAULT_LAYER}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`,
           credit: 'NASA GIBS',
           maximumLevel: 8,
+          tilingScheme: new Cesium.WebMercatorTilingScheme()
         });
       case 'gibs_viirs':
         return new Cesium.UrlTemplateImageryProvider({
           url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`,
           credit: 'NASA GIBS VIIRS',
           maximumLevel: 8,
+          tilingScheme: new Cesium.WebMercatorTilingScheme()
         });
       default:
         return new Cesium.OpenStreetMapImageryProvider({
@@ -248,10 +253,14 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                 const dataSource = await Cesium.GeoJsonDataSource.load(taskReport.geojson, {
                   stroke: Cesium.Color.fromCssColorString('#3b82f6'),
                   fill: Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.3),
-                  strokeWidth: 3,
+                  strokeWidth: 3
                 });
                 viewerRef.current.dataSources.add(dataSource);
-                viewerRef.current.zoomTo(dataSource);
+                viewerRef.current.zoomTo(dataSource, new Cesium.HeadingPitchRange(
+                  Cesium.Math.toRadians(0),
+                  Cesium.Math.toRadians(-45),
+                  1500
+                ));
                 setStatusMessage("تم تحميل طبقة المعالم بنجاح.");
                 setTimeout(() => setStatusMessage(""), 3000);
               }
@@ -374,6 +383,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     setGeographicBBox(null);
     setExportLink(null);
     setSelecting(false);
+    setActiveTab('tools');
   };
 
   const finishPolygonSelection = () => {
@@ -396,6 +406,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     
     setGeographicBBox({ minLon, maxLon, minLat, maxLat });
     setSelecting(false);
+    setActiveTab('tools');
   };
 
   const saveSelectionAsTiff = async () => {
@@ -485,8 +496,45 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         (pos) => {
           const Cesium = (window as any).Cesium;
           setStatusMessage("تم تحديد الموقع، جاري الانتقال...");
+          
+          const longitude = pos.coords.longitude;
+          const latitude = pos.coords.latitude;
+          const accuracy = pos.coords.accuracy || 30;
+
+          // إزالة علامة الموقع القديمة إن وجدت
+          if (userLocationEntityRef.current) {
+            viewerRef.current.entities.remove(userLocationEntityRef.current);
+          }
+
+          // إضافة علامة موقع (مثل خرائط جوجل: نقطة زرقاء محاطة بهالة زرقاء شفافة تحدد دقة الموقع)
+          userLocationEntityRef.current = viewerRef.current.entities.add({
+            name: "موقعي الحالي",
+            position: Cesium.Cartesian3.fromDegrees(longitude, latitude),
+            point: {
+              pixelSize: 14,
+              color: Cesium.Color.fromCssColorString('#1A73E8'), // أزرق جوجل
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 3,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY // لضمان ظهور العلامة فوق طبقة الأرض دائماً
+            },
+            ellipse: {
+              semiMajorAxis: accuracy,
+              semiMinorAxis: accuracy,
+              material: Cesium.Color.fromCssColorString('#1A73E8').withAlpha(0.2),
+              outline: true,
+              outlineColor: Cesium.Color.fromCssColorString('#1A73E8').withAlpha(0.5),
+              outlineWidth: 1.5
+            }
+          });
+
+          // الطيران والتقريب إلى موقع المستخدم (ارتفاع 150 متر للتقريب لأقصى حد ممكن ومناسب)
           viewerRef.current.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(pos.coords.longitude, pos.coords.latitude, 2000),
+            destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, 150),
+            orientation: {
+              heading: Cesium.Math.toRadians(0),
+              pitch: Cesium.Math.toRadians(-90),
+              roll: 0
+            },
             duration: 2
           });
           setTimeout(() => setStatusMessage(""), 3000);
@@ -496,6 +544,58 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           setTimeout(() => setStatusMessage(""), 3000);
         }
       );
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) return;
+
+    // 1. التحقق مما إذا كان المدخل عبارة عن إحداثيات مباشرة (مثل: lat, lon)
+    const coordRegex = /^\s*(-?\d+(\.\d+)?)\s*[\s,]\s*(-?\d+(\.\d+)?)\s*$/;
+    const match = searchQuery.match(coordRegex);
+    if (match) {
+      const latVal = parseFloat(match[1]);
+      const lonVal = parseFloat(match[3]);
+      if (latVal >= -90 && latVal <= 90 && lonVal >= -180 && lonVal <= 180) {
+        setStatusMessage("جاري الانتقال للإحداثيات...");
+        viewerRef.current.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lonVal, latVal, 5000),
+          duration: 2
+        });
+        setTimeout(() => setStatusMessage(""), 2000);
+        return;
+      }
+    }
+
+    // 2. البحث عن الموقع باستخدام خدمة Geocoding من OpenStreetMap Nominatim
+    setStatusMessage("جاري البحث عن الموقع...");
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`);
+      if (response.ok) {
+        const results = await response.json();
+        if (results && results.length > 0) {
+          const latVal = parseFloat(results[0].lat);
+          const lonVal = parseFloat(results[0].lon);
+          
+          setStatusMessage(`تم العثور على: ${results[0].display_name}`);
+          viewerRef.current.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lonVal, latVal, 10000),
+            duration: 2
+          });
+          setTimeout(() => setStatusMessage(""), 3000);
+        } else {
+          setStatusMessage("لم يتم العثور على الموقع المطلوب.");
+          setTimeout(() => setStatusMessage(""), 3000);
+        }
+      } else {
+        setStatusMessage("خطأ في خدمة البحث.");
+        setTimeout(() => setStatusMessage(""), 3000);
+      }
+    } catch (error) {
+      setStatusMessage("فشل الاتصال بخدمة البحث.");
+      setTimeout(() => setStatusMessage(""), 3000);
     }
   };
 
@@ -577,9 +677,28 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
             }
           }
         } else if (extension === 'zip') {
-          const shp = await loadShpjs();
-          const arrayBuffer = await file.arrayBuffer();
-          const geojson = await shp(arrayBuffer);
+          // إرسال ملف ZIP إلى الخادم المحلي لتحويله إلى GeoJSON بدون الحاجة لإنترنت
+          const base = API_CONFIG.baseURL || 'http://localhost:8000';
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          const response = await fetch(`${base}/gis/convert-shp-zip`, {
+            method: 'POST',
+            body: formData
+          });
+          
+          if (!response.ok) {
+            let errorMsg = "فشل الخادم في معالجة ملف الـ ZIP.";
+            try {
+              const errData = await response.json();
+              if (errData && errData.detail) {
+                errorMsg = errData.detail;
+              }
+            } catch (e) {}
+            throw new Error(errorMsg);
+          }
+          
+          const geojson = await response.json();
           dataSource = await Cesium.GeoJsonDataSource.load(geojson, {
             stroke: Cesium.Color.AQUA,
             fill: Cesium.Color.AQUA.withAlpha(0.25),
@@ -644,40 +763,79 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         <h1 className="text-white font-bold text-lg tracking-wide hidden sm:block drop-shadow-lg">وكيل تصنيف الأراضي</h1>
       </div>
 
+      {/* Floating Drawing Status Alert Banner */}
+      {selecting && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-blue-600/90 backdrop-blur-md border border-blue-400/30 text-white px-5 py-2.5 rounded-2xl text-xs font-semibold shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+          <span>وضع تحديد النقاط نشط: انقر على الخريطة لرسم 3 نقاط على الأقل، ثم اضغط على زر الإنهاء أو أيقونة المقص.</span>
+        </div>
+      )}
+
       {/* 3. Right Sidebar Icons */}
-      <div className="absolute top-6 right-6 z-40 flex flex-col gap-3">
-        <div className="flex flex-col bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-1.5 gap-1.5 shadow-2xl">
+      <div className="absolute top-6 right-6 z-50 flex flex-col gap-3">
+        <div className="flex flex-col bg-slate-900/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-1.5 gap-1.5 shadow-[0_4px_30px_rgba(0,0,0,0.7)]">
           <NavIcon icon={<Search className="w-5 h-5" />} label="بحث جيوغرافي" active={activeTab === 'search'} onClick={() => setActiveTab(activeTab === 'search' ? null : 'search')} />
           <NavIcon icon={<Layers className="w-5 h-5" />} label="الطبقات والاستيراد" active={activeTab === 'layers'} onClick={() => setActiveTab(activeTab === 'layers' ? null : 'layers')} />
           <NavIcon icon={<FolderOpen className="w-5 h-5" />} label="المشاريع السابقة" active={activeTab === 'projects'} onClick={() => setActiveTab(activeTab === 'projects' ? null : 'projects')} />
-          <div className="h-px bg-white/10 w-full" />
+          <div className="h-px bg-slate-800 w-full" />
           <NavIcon icon={<Scissors className="w-5 h-5" />} label="أدوات القص" active={activeTab === 'tools'} onClick={() => setActiveTab(activeTab === 'tools' ? null : 'tools')} />
         </div>
         
-        <button onClick={flyToMyLocation} className="w-12 h-12 rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 flex items-center justify-center text-white hover:bg-white/10 hover:border-white/20 transition-all duration-300 shadow-2xl">
+        <button onClick={flyToMyLocation} className="w-12 h-12 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-slate-700/60 flex items-center justify-center text-slate-300 hover:text-white hover:bg-blue-600 hover:border-blue-500 transition-all duration-300 shadow-[0_4px_30px_rgba(0,0,0,0.7)] hover:shadow-blue-600/30">
           <Navigation className="w-5 h-5 rotate-45" />
         </button>
       </div>
 
       {/* 4. Sliding Sidebar Drawer */}
-      <div className={`absolute top-0 bottom-0 right-16 w-80 bg-black/60 backdrop-blur-2xl border-l border-white/5 z-40 transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] shadow-2xl ${activeTab ? 'translate-x-0' : 'translate-x-full'}`}>
+      <div className={`absolute top-0 bottom-0 right-20 w-80 bg-slate-950/98 backdrop-blur-xl border-l border-slate-800 z-40 transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] shadow-[0_0_50px_rgba(0,0,0,0.85)] ${activeTab ? 'translate-x-0' : 'translate-x-full'}`}>
         {activeTab && (
           <div className="h-full flex flex-col p-6">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-bold text-white tracking-wide">
+            <div className="flex justify-between items-center pb-4 mb-6 border-b border-slate-800">
+              <h2 className="text-lg font-bold text-white tracking-wide">
                 {activeTab === 'layers' && 'الطبقات والاستيراد'}
                 {activeTab === 'projects' && 'المشاريع'}
                 {activeTab === 'tools' && 'أدوات الخريطة'}
-                {activeTab === 'search' && 'بحث'}
+                {activeTab === 'search' && 'البحث الجغرافي'}
               </h2>
-              <button onClick={() => setActiveTab(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
+              <button onClick={() => setActiveTab(null)} className="p-1.5 hover:bg-slate-800 rounded-xl transition-colors text-slate-400 hover:text-white border border-slate-800/80">
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6">
+              {activeTab === 'search' && (
+                <div className="space-y-6 animate-in fade-in duration-300">
+                  <div className="space-y-3">
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">البحث عن موقع أو إحداثيات</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="مثال: الرياض أو 24.7136, 46.6753"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleSearch();
+                          }
+                        }}
+                        className="flex-1 bg-slate-900/40 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
+                      <button
+                        onClick={handleSearch}
+                        className="p-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white transition-colors"
+                      >
+                        <Search className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed text-right">
+                      يمكنك كتابة اسم مدينة، دولة، معلم جغرافي، أو إدخال الإحداثيات مباشرة بصيغة (خط العرض، خط الطول).
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'layers' && (
-                <div className="space-y-6">
+                <div className="space-y-6 animate-in fade-in duration-300">
                   {/* Satellites List */}
                   <div className="space-y-3">
                     <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">مصدر الأقمار الصناعية</label>
@@ -786,7 +944,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               )}
 
               {activeTab === 'tools' && (
-                <div className="space-y-6">
+                <div className="space-y-6 animate-in fade-in duration-300">
                   <div className="p-5 bg-gradient-to-br from-blue-900/40 to-slate-900/40 border border-blue-500/20 rounded-2xl relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none" />
                     <div className="flex items-center gap-3 mb-3 text-blue-400">
@@ -878,7 +1036,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               )}
 
               {activeTab === 'projects' && (
-                <div className="text-center py-10 opacity-60">
+                <div className="text-center py-10 opacity-60 animate-in fade-in duration-300">
                   <FolderOpen className="w-12 h-12 text-slate-500 mx-auto mb-3" />
                   <p className="text-sm">لا توجد مشاريع سابقة</p>
                 </div>
@@ -888,17 +1046,17 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         )}
       </div>
 
-      {/* 5. Bottom Right Navigation Controls */}
+      {/* 5. Bottom Left Navigation Controls */}
       <div className="absolute bottom-10 left-6 z-40 flex flex-col gap-3">
-        <div className="flex flex-col bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col bg-slate-900/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.6)]">
           <ControlButton icon={<Compass className="w-5 h-5" />} onClick={resetCompass} title="توجيه للشمال" />
         </div>
 
-        <div className="flex flex-col bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col bg-slate-900/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.6)]">
           <ControlButton icon={<MapIcon className="w-5 h-5" />} onClick={toggle3D} title={is3D ? "عرض 2D" : "عرض 3D"} />
-          <div className="h-px bg-white/10 w-full" />
+          <div className="h-px bg-slate-800 w-full" />
           <ControlButton icon={<Plus className="w-5 h-5" />} onClick={zoomIn} title="تكبير" />
-          <div className="h-px bg-white/10 w-full" />
+          <div className="h-px bg-slate-800 w-full" />
           <ControlButton icon={<Minus className="w-5 h-5" />} onClick={zoomOut} title="تصغير" />
         </div>
       </div>
@@ -950,8 +1108,8 @@ function NavIcon({ icon, label, active, onClick }: { icon: React.ReactNode, labe
     <button
       onClick={onClick}
       className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all ${active
-          ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-          : 'text-slate-400 hover:text-white hover:bg-white/10 border border-transparent'
+          ? 'bg-blue-600 text-white border border-blue-500 shadow-lg shadow-blue-600/35 scale-105'
+          : 'text-slate-300 hover:text-white hover:bg-slate-800/80 border border-transparent'
         }`}
     >
       {icon}

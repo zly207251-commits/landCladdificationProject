@@ -30,7 +30,9 @@ def run_verification():
     
     # 3. إنشاء مهمة فحص تجريبية بمعاملات مساحية (صنعاء، اليمن كمثال)
     task_id = "task_demo_001"
-    image_path = "e:/الاوقاف/LandClassificationProject/1974.tif"
+    # Use 1974.tif in repository root
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    image_path = os.path.join(base_dir, "1974.tif")
     task_metadata = {
         "pixel_scale_meters": 0.5,  # دقة البكسل: 1 بكسل يمثل 0.5 متر
         "ref_latitude": 15.3694,    # إحداثيات خط العرض

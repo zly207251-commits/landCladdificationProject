@@ -264,10 +264,28 @@ export default function MapViewer({
 
   // وظيفة عرض GeoJSON
   const renderGeoJSON = () => {
-    if (!geojsonData || !isValidFeatureCollection(geojsonData)) {
+    if (!geojsonData || geojsonData.type !== 'FeatureCollection' || !Array.isArray(geojsonData.features)) {
       console.warn('Invalid GeoJSON object in MapViewer:', geojsonData);
       return null;
     }
+
+    // تصفية المعالم لترشيح المعالم الصالحة وتجنب كسر الخريطة بالكامل بسبب معلم واحد تالف
+    const validFeatures = geojsonData.features.filter((feat: any) => {
+      const valid = isValidFeature(feat);
+      if (!valid) {
+        console.warn('Skipping invalid geometry feature in MapViewer:', feat);
+      }
+      return valid;
+    });
+
+    if (validFeatures.length === 0) {
+      return null;
+    }
+
+    const cleanGeojsonData = {
+      ...geojsonData,
+      features: validFeatures
+    };
 
     const onEachFeature = (feature: any, layer: L.Layer) => {
       layer.on({
@@ -291,8 +309,8 @@ export default function MapViewer({
 
     return (
       <GeoJSON
-        key={JSON.stringify(geojsonData)}
-        data={geojsonData}
+        key={JSON.stringify(cleanGeojsonData)}
+        data={cleanGeojsonData}
         style={getStyle}
         onEachFeature={onEachFeature}
       />

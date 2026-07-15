@@ -214,6 +214,7 @@ class ImageTiler:
 
                     db_lock = threading.Lock()
                     reader_lock = threading.Lock()
+                    segmenter_lock = threading.Lock()
 
                     # Capping max workers at 3 to prevent OOM in resource-constrained environments
                     max_workers = min(3, max(1, psutil.cpu_count(logical=False) or 1))
@@ -241,6 +242,7 @@ class ImageTiler:
                                     segmenter.use_sam = False
                                     segmenter.fail_fast = False
 
+                         # معالجة الجزء باستخدام SAM أو البديل السريع
                         try:
                             with reader_lock:
                                 window = Window(col_off=x_start, row_off=y_start, width=w_width, height=w_height)
@@ -263,7 +265,8 @@ class ImageTiler:
                                 tile_image = cv2.cvtColor(tile_image, cv2.COLOR_RGBA2BGR)
                                 
                             # معالجة الجزء باستخدام SAM أو البديل السريع
-                            segments = segmenter.segment_image(tile_image)
+                            with segmenter_lock:
+                                segments = segmenter.segment_image(tile_image)
                             
                             local_area = 0.0
                             if segments:

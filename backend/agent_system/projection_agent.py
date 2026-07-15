@@ -352,10 +352,29 @@ class ProjectionAgent(BaseAgent):
             'roads': (200, 200, 200),       # Gray
             'arid': (19, 69, 139),          # Brown
             'unknown': (0, 255, 255),       # Yellow
+            
+            # الدعم العربي
+            'شارع': (200, 200, 200),
+            'مبنى': (0, 0, 255),
+            'وادي': (255, 0, 0),
+            'مزرعة': (34, 139, 34),
+            'أرض': (34, 139, 34),
+            'جبل': (19, 69, 139),
+            'وغيرها': (0, 255, 255)
         }
 
         overlay = img_preview.copy()
         
+        # جلب تفاصيل المهمة للتحويل البديل
+        task_info = memory.get_task(task_id)
+        task_meta = task_info.get("metadata", {}) if task_info else {}
+        pixel_scale = float(task_meta.get("pixel_scale_meters", 0.5))
+        ref_lat = float(task_meta.get("ref_latitude", 15.3694))
+        ref_lon = float(task_meta.get("ref_longitude", 44.1910))
+        
+        lat_scale = 1.0 / 111111.0
+        lon_scale = 1.0 / (111111.0 * np.cos(np.radians(ref_lat))) if ref_lat else 1.0
+
         for layer in layers:
             label = layer.get('layer_name', 'unknown').lower()
             color = COLOR_MAP.get(label, COLOR_MAP['unknown'])
@@ -369,37 +388,59 @@ class ProjectionAgent(BaseAgent):
                     geo_polygons = []
                     
             polygons_to_draw = []
-            if geo_polygons and ds_transform is not None:
-                transformer = None
-                if ds_crs_str and ds_crs_str != 'EPSG:4326':
-                    try:
-                        from pyproj import Transformer
-                        transformer = Transformer.from_crs('EPSG:4326', ds_crs_str, always_xy=True)
-                    except Exception:
-                        pass
-                
-                inv_transform = ~ds_transform
-                for geo_poly in geo_polygons:
-                    coords_list = geo_poly
-                    if len(coords_list) > 0 and isinstance(coords_list[0], list) and isinstance(coords_list[0][0], list):
-                        coords_list = coords_list[0]
-                        
-                    poly_pixels = []
-                    for pt in coords_list:
-                        if len(pt) < 2:
-                            continue
-                        lon_val, lat_val = pt[0], pt[1]
-                        if transformer is not None:
-                            x_img, y_img = transformer.transform(lon_val, lat_val)
-                        else:
-                            x_img, y_img = lon_val, lat_val
-                        
-                        px_col, px_row = inv_transform * (x_img, y_img)
-                        poly_pixels.append([px_col, px_row])
-                        
-                    if len(poly_pixels) >= 3:
-                        polygons_to_draw.append(poly_pixels)
-            else:
+            
+            if geo_polygons:
+                if ds_transform is not None:
+                    transformer = None
+                    if ds_crs_str and ds_crs_str != 'EPSG:4326':
+                        try:
+                            from pyproj import Transformer
+                            transformer = Transformer.from_crs('EPSG:4326', ds_crs_str, always_xy=True)
+                        except Exception:
+                            pass
+                    
+                    inv_transform = ~ds_transform
+                    for geo_poly in geo_polygons:
+                        coords_list = geo_poly
+                        if len(coords_list) > 0 and isinstance(coords_list[0], list) and isinstance(coords_list[0][0], list):
+                            coords_list = coords_list[0]
+                            
+                        poly_pixels = []
+                        for pt in coords_list:
+                            if len(pt) < 2:
+                                continue
+                            lon_val, lat_val = pt[0], pt[1]
+                            if transformer is not None:
+                                x_img, y_img = transformer.transform(lon_val, lat_val)
+                            else:
+                                x_img, y_img = lon_val, lat_val
+                            
+                            px_col, px_row = inv_transform * (x_img, y_img)
+                            poly_pixels.append([px_col, px_row])
+                            
+                        if len(poly_pixels) >= 3:
+                            polygons_to_draw.append(poly_pixels)
+                else:
+                    # تحويل عكسي جغرافي مبسط (بديل لعدم وجود ملف GeoTIFF وتوافر الإحداثيات المرجعية)
+                    for geo_poly in geo_polygons:
+                        coords_list = geo_poly
+                        if len(coords_list) > 0 and isinstance(coords_list[0], list) and isinstance(coords_list[0][0], list):
+                            coords_list = coords_list[0]
+                            
+                        poly_pixels = []
+                        for pt in coords_list:
+                            if len(pt) < 2:
+                                continue
+                            lon_val, lat_val = pt[0], pt[1]
+                            px_col = (lon_val - ref_lon) / (pixel_scale * lon_scale)
+                            px_row = -(lat_val - ref_lat) / (pixel_scale * lat_scale)
+                            poly_pixels.append([px_col, px_row])
+                            
+                        if len(poly_pixels) >= 3:
+                            polygons_to_draw.append(poly_pixels)
+                            
+            # تراجع لرسم الإحداثيات بكسل المباشرة إذا لم تتوفر إحداثيات جغرافية
+            if not polygons_to_draw:
                 polygons = layer.get('polygons', [])
                 if isinstance(polygons, str):
                     try:

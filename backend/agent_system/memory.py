@@ -50,9 +50,6 @@ class SharedMemory:
     تُستخدم لحفظ حالة المهام، بيانات الطبقات الجغرافية المكانية، والمراسلات بين الوكلاء.
     """
     def __init__(self, db_path: str = "shared_memory.db"):
-        if not os.path.isabs(db_path):
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-            db_path = os.path.join(project_root, db_path)
         self.db_path = os.path.abspath(db_path)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
@@ -477,7 +474,8 @@ class SharedMemory:
             geometric_features={
                 "orientation_degrees": meta.get("orientation_degrees", 0.0),
                 "pixel_scale": meta.get("pixel_scale", 0.5),
-                "centroid_pixel": meta.get("centroid_pixel", [0.0, 0.0])
+                "centroid_pixel": meta.get("centroid_pixel", [0.0, 0.0]),
+                "polygons": polygons
             },
             analysis_results=meta.get("local_classification", {
                 "class_name": meta.get("description", f"قطعة {layer_name}"),
@@ -504,13 +502,13 @@ class SharedMemory:
                 coords = geom.get('coordinates', [])
                 if coords:
                     geo_polys = coords
-                    polys = feat.get('geometric_features', {}).get('centroid_pixel', [[0.0, 0.0]])
+                    polys = feat.get('geometric_features', {}).get('polygons', feat.get('geometric_features', {}).get('centroid_pixel', [[0.0, 0.0]]))
             else:
                 # تراجع لـ SQLite WKT
                 wkt = feat.get('geom')
                 if wkt:
                     geo_polys = parse_wkt_polygon(wkt)
-                    polys = feat.get('geometric_features', {}).get('centroid_pixel', [[0.0, 0.0]])
+                    polys = feat.get('geometric_features', {}).get('polygons', feat.get('geometric_features', {}).get('centroid_pixel', [[0.0, 0.0]]))
             
             # حساب إحداثي المركز
             if feat.get('centroid_geojson'):

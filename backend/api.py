@@ -251,7 +251,7 @@ def normalize_remote_url(remote_url: str) -> str:
 def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
     import html as html_lib
     # Google Drive may render a link on the warning page with the download URL.
-    match = re.search(r'href="([^"]*uc\?export=download[^"]*)"', html)
+    match = re.search(r'href=["\']([^"\']*uc\?export=download[^"\']*)["\']', html)
     if match:
         unescaped_url = html_lib.unescape(match.group(1))
         return urljoin(base_url, unescaped_url)
@@ -1257,8 +1257,15 @@ def get_task_report(task_id: str):
         "map_zoom": map_zoom
     }
 
+def remove_file(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
 @app.get("/tasks/{task_id}/export", summary="تصدير طبقات المهمة بصيغ جغرافية مختلفة")
-def export_task_layers(task_id: str, format: str = "geojson"):
+def export_task_layers(task_id: str, format: str = "geojson", background_tasks: BackgroundTasks = None):
     """
     يصدر الطبقات الجغرافية المستخرجة للمهمة بصيغ: geojson, kml, kmz, shp, csv
     """
@@ -1301,11 +1308,16 @@ def export_task_layers(task_id: str, format: str = "geojson"):
                         }
                     })
         geojson_data = {"type": "FeatureCollection", "features": features}
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".geojson")
-        with open(temp_file.name, "w", encoding="utf-8") as f:
+        
+        fd, path = tempfile.mkstemp(suffix=".geojson")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
-        return FileResponse(temp_file.name, media_type="application/geo+json", filename=f"export_{task_id}.geojson")
-
+            
+        if background_tasks:
+            background_tasks.add_task(remove_file, path)
+        return FileResponse(path, media_type="application/geo+json", filename=f"export_{task_id}.geojson")
+        
     # 2. تصدير KML / KMZ
     elif format in ["kml", "kmz"]:
         try:
@@ -1345,16 +1357,22 @@ def export_task_layers(task_id: str, format: str = "geojson"):
                             pol.style.linestyle.color = "7fcccccc"
                             pol.style.polystyle.color = "33cccccc"
                             
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{format}")
+            fd, path = tempfile.mkstemp(suffix=f".{format}")
+            os.close(fd)
+            
             if format == "kml":
-                kml.save(temp_file.name)
-                return FileResponse(temp_file.name, media_type="application/vnd.google-earth.kml+xml", filename=f"export_{task_id}.kml")
+                kml.save(path)
+                if background_tasks:
+                    background_tasks.add_task(remove_file, path)
+                return FileResponse(path, media_type="application/vnd.google-earth.kml+xml", filename=f"export_{task_id}.kml")
             else:
-                kml.savekmz(temp_file.name)
-                return FileResponse(temp_file.name, media_type="application/vnd.google-earth.kmz", filename=f"export_{task_id}.kmz")
+                kml.savekmz(path)
+                if background_tasks:
+                    background_tasks.add_task(remove_file, path)
+                return FileResponse(path, media_type="application/vnd.google-earth.kmz", filename=f"export_{task_id}.kmz")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف KML/KMZ: {str(e)}")
-
+            
     # 3. تصدير Shapefile (Zipped SHP folder)
     elif format == "shp":
         try:
@@ -1382,7 +1400,7 @@ def export_task_layers(task_id: str, format: str = "geojson"):
                             "qirat": int(ly["area_qirat"]),
                             "sahm": float(ly["area_sahm"])
                         })
-            
+                        
             if not features:
                 raise ValueError("لا توجد مضلعات صالحة لتصديرها كـ Shapefile")
                 
@@ -1393,23 +1411,28 @@ def export_task_layers(task_id: str, format: str = "geojson"):
             shp_path = os.path.join(temp_dir, f"{shp_base_name}.shp")
             gdf.to_file(shp_path, driver="ESRI Shapefile", encoding="utf-8")
             
-            zip_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            with zipfile.ZipFile(zip_file.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            fd, path = tempfile.mkstemp(suffix=".zip")
+            os.close(fd)
+            
+            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for root, dirs, files in os.walk(temp_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
                         zipf.write(file_path, arcname=file)
                         
             shutil.rmtree(temp_dir)
-            return FileResponse(zip_file.name, media_type="application/zip", filename=f"export_{task_id}.zip")
+            if background_tasks:
+                background_tasks.add_task(remove_file, path)
+            return FileResponse(path, media_type="application/zip", filename=f"export_{task_id}.zip")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف Shapefile: {str(e)}")
-
+            
     # 4. تصدير CSV (إحداثيات المضلعات)
     elif format == "csv":
         import csv
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        with open(temp_file.name, "w", newline="", encoding="utf-8-sig") as f:
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(["layer_name", "area_sq_meters", "area_agricultural", "polygon_index", "longitude", "latitude"])
             for ly in layers:
@@ -1423,7 +1446,9 @@ def export_task_layers(task_id: str, format: str = "geojson"):
                     for pt in ring:
                         if isinstance(pt, (list, tuple)) and len(pt) >= 2:
                             writer.writerow([layer_name, ly["area_sq_meters"], area_agri, idx, pt[0], pt[1]])
-        return FileResponse(temp_file.name, media_type="text/csv", filename=f"export_{task_id}.csv")
+        if background_tasks:
+            background_tasks.add_task(remove_file, path)
+        return FileResponse(path, media_type="text/csv", filename=f"export_{task_id}.csv")
         
     else:
         raise HTTPException(status_code=400, detail=f"صيغة التصدير '{format}' غير مدعومة.")
@@ -1789,6 +1814,65 @@ async def segment_image(file: UploadFile = File(...)):
     # إخراج الصورة
     _, buffer = cv2.imencode(".png", img)
     return StreamingResponse(io.BytesIO(buffer.tobytes()), media_type="image/png")
+
+@app.post("/gis/convert-shp-zip", summary="تحويل ملف Shapefile ZIP إلى GeoJSON")
+async def convert_shp_zip_to_geojson(file: UploadFile = File(...)):
+    """
+    يستقبل ملف Shapefile مضغوط بصيغة ZIP، ويقوم بتحويله إلى GeoJSON باستخدام Geopandas و Shapely.
+    """
+    if not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="يجب أن يكون الملف بصيغة ZIP مضغوطة.")
+        
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, file.filename)
+    
+    try:
+        # 1. حفظ ملف الـ ZIP مؤقتاً
+        with open(zip_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+            
+        # 2. فك ضغط ملف الـ ZIP
+        extract_dir = os.path.join(temp_dir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+            
+        # 3. البحث عن ملف .shp داخل المجلد
+        shp_file = None
+        for root, dirs, files in os.walk(extract_dir):
+            for f_name in files:
+                if f_name.lower().endswith('.shp'):
+                    shp_file = os.path.join(root, f_name)
+                    break
+            if shp_file:
+                break
+                
+        if not shp_file:
+            raise HTTPException(status_code=400, detail="لم يتم العثور على ملف بصيغة .shp داخل مجلد الـ ZIP.")
+            
+        # 4. قراءة ملف الـ Shapefile باستخدام Geopandas وتحويله إلى EPSG:4326
+        import geopandas as gpd
+        gdf = gpd.read_file(shp_file)
+        if gdf.crs is None:
+            gdf.crs = "EPSG:4326"
+        elif gdf.crs != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+            
+        # 5. تحويل البيانات إلى تنسيق GeoJSON
+        geojson_str = gdf.to_json()
+        geojson_data = json.loads(geojson_str)
+        
+        return geojson_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء معالجة ملف Shapefile: {str(e)}")
+    finally:
+        # تنظيف المجلدات المؤقتة
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     use_reload = os.getenv("BACKEND_RELOAD", "false").lower() in {"1", "true", "yes"}
