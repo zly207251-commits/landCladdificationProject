@@ -9,6 +9,7 @@ import io
 import uuid
 import os
 import json
+import hashlib
 import mimetypes
 import importlib.util
 import re
@@ -718,9 +719,10 @@ async def analyze_image_with_agents(
     temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
     
-    # Stream-write the uploaded file in chunks and enforce a max upload size
+    # Stream-write the uploaded file in chunks, enforce a max upload size, and compute hash
     MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
     size = 0
+    sha256_hash = hashlib.sha256()
     try:
         with open(temp_file_path, "wb") as f:
             while True:
@@ -736,6 +738,7 @@ async def analyze_image_with_agents(
                         pass
                     raise HTTPException(status_code=413, detail="الملف أكبر من الحد المسموح (1 GB)")
                 f.write(chunk)
+                sha256_hash.update(chunk)
     except HTTPException:
         raise
     except Exception as e:
@@ -746,6 +749,25 @@ async def analyze_image_with_agents(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
+        
+    file_hash = sha256_hash.hexdigest()
+    
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
+    existing_task = memory.get_completed_task_by_hash(file_hash)
+    if existing_task:
+        # تنظيف الملف المؤقت لأننا لن نحتاجه
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        except Exception:
+            pass
+            
+        print(f"[api] analyze_image_with_agents: found cached task {existing_task['task_id']} for hash {file_hash}")
+        return {
+            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
+        }
         
     # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
     task_metadata = {
@@ -768,7 +790,7 @@ async def analyze_image_with_agents(
             task_metadata['geo_metadata'] = geo_metadata
 
     print(f"[api] analyze_image_with_agents request task_id={task_id} file={file.filename} db={getattr(memory, 'db_path', '<no-db>')}")
-    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
     print(f"[api] analyze_image_with_agents create_task returned {created} for {task_id}")
     
     # Debug: verify task was created

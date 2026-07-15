@@ -58,6 +58,8 @@ class SharedMemory:
             columns = [row[1] for row in cursor.fetchall()]
             if 'processed_image_path' not in columns:
                 cursor.execute("ALTER TABLE tasks ADD COLUMN processed_image_path TEXT")
+            if 'image_hash' not in columns:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN image_hash TEXT")
             
             # 2. جدول طبقات المعالم (task_layers): يحفظ المضلعات المستخرجة ومساحاتها
             cursor.execute("""
@@ -112,11 +114,11 @@ class SharedMemory:
 
     # --- عمليات إدارة المهام (Tasks) ---
     
-    def create_task(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def create_task(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None, image_hash: Optional[str] = None) -> bool:
         """إنشاء مهمة تحليل جديدة في قاعدة البيانات."""
-        return self.ensure_task_record(task_id, image_path, metadata=metadata, status="PENDING")
+        return self.ensure_task_record(task_id, image_path, metadata=metadata, status="PENDING", image_hash=image_hash)
 
-    def ensure_task_record(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None, status: str = "PENDING") -> bool:
+    def ensure_task_record(self, task_id: str, image_path: str, metadata: Optional[Dict[str, Any]] = None, status: str = "PENDING", image_hash: Optional[str] = None) -> bool:
         """تأمين وجود سجل المهمة، وإنشاؤه أو تحديثه بطريقة آمنة."""
         metadata_str = json.dumps(metadata or {})
         now = datetime.now().isoformat()
@@ -124,15 +126,16 @@ class SharedMemory:
             with self._get_connection() as conn:
                 conn.execute(
                     """
-                    INSERT INTO tasks (task_id, image_path, status, metadata, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO tasks (task_id, image_path, status, metadata, created_at, updated_at, image_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id) DO UPDATE SET
                         image_path = excluded.image_path,
                         status = excluded.status,
                         metadata = excluded.metadata,
-                        updated_at = excluded.updated_at
+                        updated_at = excluded.updated_at,
+                        image_hash = excluded.image_hash
                     """,
-                    (task_id, image_path, status, metadata_str, now, now)
+                    (task_id, image_path, status, metadata_str, now, now, image_hash)
                 )
                 conn.commit()
                 print(f"[SharedMemory] ensure_task_record: {task_id} -> {self.db_path} ({status})")
@@ -196,6 +199,22 @@ class SharedMemory:
                 task['metadata'] = json.loads(task['metadata']) if task['metadata'] else {}
                 tasks.append(task)
         return tasks
+
+    def get_completed_task_by_hash(self, image_hash: str) -> Optional[Dict[str, Any]]:
+        """البحث عن مهمة مكتملة بنجاح تمتلك نفس بصمة الصورة."""
+        if not image_hash:
+            return None
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE image_hash = ? AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 1",
+                (image_hash,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                data['metadata'] = json.loads(data['metadata']) if data['metadata'] else {}
+                print(f"[SharedMemory] get_completed_task_by_hash: found {data['task_id']} for hash {image_hash}")
+                return data
+        return None
 
     # --- عمليات إدارة الطبقات الجغرافية (Layers) ---
     
