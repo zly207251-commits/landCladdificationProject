@@ -245,8 +245,9 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
         session.close()
 
 
-def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
+def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int) -> str:
     chunk_dir = get_chunk_dir(upload_id)
+    sha256_hash = hashlib.sha256()
     with open(target_path, "wb") as target:
         for idx in range(total_chunks):
             chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
@@ -258,6 +259,8 @@ def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
                     if not data:
                         break
                     target.write(data)
+                    sha256_hash.update(data)
+    return sha256_hash.hexdigest()
 
 
 def cleanup_chunk_upload(upload_id: str):
@@ -527,10 +530,26 @@ async def complete_task_chunk_upload(
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
     try:
-        merge_chunk_files(upload_id, temp_file_path, total_chunks)
+        file_hash = merge_chunk_files(upload_id, temp_file_path, total_chunks)
         cleanup_chunk_upload(upload_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")
+
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
+    existing_task = memory.get_completed_task_by_hash(file_hash)
+    if existing_task:
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        except Exception:
+            pass
+            
+        print(f"[api] complete_task_chunk_upload: found cached task {existing_task['task_id']} for hash {file_hash}")
+        return {
+            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
+        }
 
     task_metadata = {
         key: value for key, value in metadata.items()
@@ -538,7 +557,7 @@ async def complete_task_chunk_upload(
     }
 
     print(f"[api] complete_task_chunk_upload request task_id={task_id} upload_id={upload_id} db={getattr(memory, 'db_path', '<no-db>')}")
-    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
     print(f"[api] complete_task_chunk_upload create_task returned {created} for {task_id}")
     
     # Debug: verify task was created
