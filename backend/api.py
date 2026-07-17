@@ -584,8 +584,8 @@ async def upload_task_chunk(
     sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
-    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM'),
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM'),
     tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
     if chunk_index < 0 or chunk_index >= total_chunks:
@@ -769,8 +769,8 @@ async def analyze_remote_image(
     sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
-    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM')
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM')
 ):
     try:
         download_url = normalize_remote_url(remote_url)
@@ -888,8 +888,8 @@ async def analyze_image_with_agents(
     sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(8, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
-    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM'),
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM'),
     tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
     """
@@ -1395,6 +1395,10 @@ def export_task_layers(task_id: str, format: str = "geojson", background_tasks: 
                         else:
                             pol.style.linestyle.color = "7fcccccc"
                             pol.style.polystyle.color = "33cccccc"
+                        
+                        # تعطيل تعبئة المضلعات تماماً ورسم الحدود الخارجية فقط لرؤية الأرض بوضوح
+                        pol.style.polystyle.fill = 0
+                        pol.style.polystyle.outline = 1
                             
             fd, path = tempfile.mkstemp(suffix=f".{format}")
             os.close(fd)

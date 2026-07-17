@@ -363,8 +363,6 @@ class ProjectionAgent(BaseAgent):
             'وغيرها': (0, 255, 255)
         }
 
-        overlay = img_preview.copy()
-        
         # جلب تفاصيل المهمة للتحويل البديل
         task_info = memory.get_task(task_id)
         task_meta = task_info.get("metadata", {}) if task_info else {}
@@ -457,10 +455,8 @@ class ProjectionAgent(BaseAgent):
                     [int(pt[0] * scale_x), int(pt[1] * scale_y)] for pt in poly
                 ], dtype=np.int32)
                 
-                cv2.fillPoly(overlay, [scaled_poly], color)
-                cv2.polylines(img_preview, [scaled_poly], True, color, 2)
-                
-        cv2.addWeighted(overlay, 0.35, img_preview, 0.65, 0, img_preview)
+                # رسم الحدود الخارجية فقط بلون الطبقة وسماكة 3 بكسل دون تعبئة المساحات
+                cv2.polylines(img_preview, [scaled_poly], True, color, 3)
 
         try:
             processed_filename = f"{task_id}_processed.png"

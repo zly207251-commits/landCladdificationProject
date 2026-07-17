@@ -37,8 +37,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samUseFallback, setSamUseFallback] = useState(false);
   const [samMinMaskRegionArea, setSamMinMaskRegionArea] = useState('500');
   const [samPointsPerSide, setSamPointsPerSide] = useState('16');
-  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
-  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
+  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.86');
+  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.85');
   const [tfwContent, setTfwContent] = useState<string | null>(null);
 
   const handleTfwFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

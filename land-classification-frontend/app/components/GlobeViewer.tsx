@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { API_CONFIG } from "@/app/lib/map-config";
+import { API_CONFIG, LAYER_STYLES } from "@/app/lib/map-config";
 import {
   Search, Menu, Layers, FolderOpen, Compass, Plus, Minus, Navigation,
   Map as MapIcon, Scissors, X, Download, Home, Info, Crosshair, Eye, EyeOff, Trash2, UploadCloud
@@ -251,10 +251,31 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
               const taskReport = await response.json();
               if (taskReport.geojson) {
                 const dataSource = await Cesium.GeoJsonDataSource.load(taskReport.geojson, {
-                  stroke: Cesium.Color.fromCssColorString('#3b82f6'),
-                  fill: Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.3),
                   strokeWidth: 3
                 });
+                
+                // تطبيق حدود ملونة مخصصة وتظليل شفاف تماماً
+                const entities = dataSource.entities.values;
+                for (const entity of entities) {
+                  if (entity.polygon) {
+                    const props = entity.properties;
+                    const layerType = props.layer_name ? props.layer_name.getValue() : 'unknown';
+                    
+                    let hexColor = '#cccccc';
+                    if (layerType && LAYER_STYLES.agents[layerType]) {
+                      hexColor = LAYER_STYLES.agents[layerType].color;
+                    } else if (layerType && LAYER_STYLES.classifications[layerType]) {
+                      hexColor = LAYER_STYLES.classifications[layerType].color;
+                    }
+                    
+                    const cesiumColor = Cesium.Color.fromCssColorString(hexColor);
+                    
+                    entity.polygon.fill = new Cesium.ConstantProperty(false); // تعطيل التظليل والتعبئة كلياً
+                    entity.polygon.outline = new Cesium.ConstantProperty(true);
+                    entity.polygon.outlineColor = new Cesium.ConstantProperty(cesiumColor);
+                  }
+                }
+                
                 viewerRef.current.dataSources.add(dataSource);
                 viewerRef.current.zoomTo(dataSource, new Cesium.HeadingPitchRange(
                   Cesium.Math.toRadians(0),
@@ -644,7 +665,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           const jsonData = JSON.parse(text);
           dataSource = await Cesium.GeoJsonDataSource.load(jsonData, {
             stroke: Cesium.Color.YELLOW,
-            fill: Cesium.Color.YELLOW.withAlpha(0.25),
+            fill: Cesium.Color.TRANSPARENT, // تعبئة شفافة بدون تظليل
             strokeWidth: 3
           });
         } else if (extension === 'kml' || extension === 'kmz') {
@@ -654,30 +675,22 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
             canvas: viewerRef.current.canvas
           });
           
-          // Style adjustments for KML
+          // إيقاف تعبئة المضلعات المستوردة تماماً ورسم الحدود فقط
           const entities = dataSource.entities.values;
           for (const entity of entities) {
             if (entity.polygon) {
+              entity.polygon.fill = new Cesium.ConstantProperty(false); // تعطيل التعبئة كلياً
+              entity.polygon.outline = new Cesium.ConstantProperty(true);
               if (entity.polygon.material && entity.polygon.material.color) {
                 const originalColor = entity.polygon.material.color.getValue(Cesium.JulianDate.now());
-                if (originalColor) {
-                  entity.polygon.material.color = new Cesium.ConstantProperty(
-                    Cesium.Color.fromAlpha(originalColor, 0.35)
-                  );
-                }
+                entity.polygon.outlineColor = new Cesium.ConstantProperty(originalColor || Cesium.Color.YELLOW);
               } else {
-                entity.polygon.material = new Cesium.ColorMaterialProperty(
-                  Cesium.Color.YELLOW.withAlpha(0.35)
-                );
-              }
-              entity.polygon.outline = new Cesium.ConstantProperty(true);
-              if (!entity.polygon.outlineColor) {
                 entity.polygon.outlineColor = new Cesium.ConstantProperty(Cesium.Color.YELLOW);
               }
             }
           }
         } else if (extension === 'zip') {
-          // إرسال ملف ZIP إلى الخادم المحلي لتحويله إلى GeoJSON بدون الحاجة لإنترنت
+          // إرسال ملف ZIP إلى الخادم المحلي لتحويله إلى GeoJSON
           const base = API_CONFIG.baseURL || 'http://localhost:8000';
           const formData = new FormData();
           formData.append('file', file);
@@ -701,7 +714,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
           const geojson = await response.json();
           dataSource = await Cesium.GeoJsonDataSource.load(geojson, {
             stroke: Cesium.Color.AQUA,
-            fill: Cesium.Color.AQUA.withAlpha(0.25),
+            fill: Cesium.Color.TRANSPARENT, // تعبئة شفافة بدون تظليل
             strokeWidth: 3
           });
         } else {

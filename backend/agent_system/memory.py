@@ -84,31 +84,36 @@ class SharedMemory:
                     print(f"⚠️ تعذر تفعيل امتداد PostGIS (قد لا تملك الصلاحيات): {e}")
                     conn.rollback()
 
-            # إنشاء الجداول بناءً على المخططات المعرفة بملف db_config.py
+            # 1. إنشاء جدول المهام (tasks)
             cursor.execute(TABLES_SQL["tasks"][db_type])
-            
-            # التأكد من إضافة الحقل processed_image_path للجداول القديمة في SQLite
-            if db_type == "sqlite":
-                try:
-                    cursor.execute("PRAGMA table_info(tasks)")
-                    columns = [row[1] for row in cursor.fetchall()]
-                    if 'processed_image_path' not in columns:
-                        cursor.execute("ALTER TABLE tasks ADD COLUMN processed_image_path TEXT")
-                except Exception:
-                    pass
 
+            # التأكد من إضافة الحقول الجديدة للجداول القديمة في قاعدة البيانات (Migration)
+            try:
+                if is_postgresql():
+                    try:
+                        cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS processed_image_path TEXT")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS image_hash VARCHAR(100)")
+                    except Exception:
+                        pass
+                else:
+                    # SQLite لا يدعم ADD COLUMN IF NOT EXISTS، لذا سنحاول الإضافة وتجاهل الخطأ إذا كان العمود موجوداً بالفعل
+                    try:
+                        cursor.execute("PRAGMA table_info(tasks)")
+                        columns = [row[1] for row in cursor.fetchall()]
+                        if 'processed_image_path' not in columns:
+                            cursor.execute("ALTER TABLE tasks ADD COLUMN processed_image_path TEXT")
+                        if 'image_hash' not in columns:
+                            cursor.execute("ALTER TABLE tasks ADD COLUMN image_hash TEXT")
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[SharedMemory] Warning during tasks schema migration: {e}")
+
+            # 2. إنشاء جدول المعالم المكانية (spatial_features)
             cursor.execute(TABLES_SQL["spatial_features"][db_type])
-            # Ensure processed_image_path and image_hash exist on older schemas (SQLite)
-            if not is_postgresql():
-                try:
-                    cursor.execute("PRAGMA table_info(tasks)")
-                    columns = [row[1] for row in cursor.fetchall()]
-                    if 'processed_image_path' not in columns:
-                        cursor.execute("ALTER TABLE tasks ADD COLUMN processed_image_path TEXT")
-                    if 'image_hash' not in columns:
-                        cursor.execute("ALTER TABLE tasks ADD COLUMN image_hash TEXT")
-                except Exception:
-                    pass
 
             # إنشاء كشافات مكانية (Spatial Index) لتسريع الاستعلامات الهندسية في PostgreSQL
             if is_postgresql():
@@ -118,6 +123,7 @@ class SharedMemory:
                 except Exception:
                     pass
 
+            # 3. إنشاء جدول الرسائل (agent_messages)
             cursor.execute(TABLES_SQL["agent_messages"][db_type])
             
             # 4. جدول حالة المربعات (task_tiles): لحفظ حالة كل جزء وتوفير إمكانية الاستئناف
@@ -173,7 +179,7 @@ class SharedMemory:
                 conn.execute(
                     self._qp("""
                     INSERT INTO tasks (task_id, image_path, status, metadata, created_at, updated_at, image_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT(task_id) DO UPDATE SET
                         image_path = excluded.image_path,
                         status = excluded.status,
@@ -434,7 +440,7 @@ class SharedMemory:
         try:
             with self._get_connection() as conn:
                 row = conn.execute(
-                    self._qp("SELECT * FROM tasks WHERE image_hash = ? AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 1"),
+                    self._qp("SELECT * FROM tasks WHERE image_hash = %s AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 1"),
                     (image_hash,)
                 ).fetchone()
                 if row:

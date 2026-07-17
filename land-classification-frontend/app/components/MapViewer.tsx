@@ -201,11 +201,11 @@ export default function MapViewer({
     
     return {
       fillColor: color,
-      weight: 2,
+      weight: 2.5,
       opacity: 1,
-      color: 'white',
-      dashArray: '3',
-      fillOpacity: 0.7
+      color: color,
+      dashArray: '',
+      fillOpacity: 0
     };
   };
 

@@ -16,8 +16,8 @@ class LandSegmenterSAM:
         self.use_fallback = use_fallback
         self.min_mask_region_area = min_mask_region_area
         self.points_per_side = 8
-        self.pred_iou_thresh = 0.45
-        self.stability_score_thresh = 0.30
+        self.pred_iou_thresh = 0.86
+        self.stability_score_thresh = 0.85
         self.tile_size = tile_size
         self.overlap = overlap
         self._models_loaded = False
@@ -90,6 +90,7 @@ class LandSegmenterSAM:
             pred_iou_thresh=pred_iou_thresh,
             stability_score_thresh=stability_score_thresh,
             min_mask_region_area=min_mask_region_area,
+            box_nms_thresh=0.4, # تصفية المضلعات المتداخلة بشكل أقوى وأسرع
         )
 
     def apply_parameters(
@@ -196,9 +197,9 @@ class LandSegmenterSAM:
                     segmentation = m['segmentation'].astype(np.uint8)
                     # تنظيف قناع SAM: عمليات مصلحية لإزالة الشوائب والبقع الصغيرة
                     try:
-                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                        # استخدام نواة مربعة صغيرة جداً (2x2) لملء الفراغات الصغيرة فقط دون تدوير زوايا المباني الحادة
+                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
                         seg_clean = cv2.morphologyEx((segmentation * 255).astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-                        seg_clean = cv2.morphologyEx(seg_clean, cv2.MORPH_OPEN, kernel)
                         seg255 = seg_clean
                         segmentation = (seg255 > 127).astype(np.uint8)
                     except Exception:
@@ -211,14 +212,14 @@ class LandSegmenterSAM:
                         # تجاهل المضلعات الصغيرة جدًا بناءً على إعداد min_mask_region_area
                         if area < self.min_mask_region_area:
                             continue
-                        epsilon = 0.005 * cv2.arcLength(cnt, True)
+                        epsilon = 0.02 * cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, epsilon, True)
                         if len(approx) >= 3:
                             pts = approx.reshape(-1, 2)
                             try:
                                 poly = Polygon(pts)
-                                # تبسيط الشكل بحذر للحفاظ على التفاصيل المكانية
-                                simple = poly.simplify(0.5, preserve_topology=True)
+                                # تبسيط الشكل بشكل أكثر فعالية للحصول على حدود مستقيمة ونظيفة
+                                simple = poly.simplify(1.5, preserve_topology=True)
                                 if not simple.is_empty and simple.is_valid and len(simple.exterior.coords) >= 3:
                                     polygons.append([list(map(float, c)) for c in simple.exterior.coords[:-1]])
                             except Exception:
