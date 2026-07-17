@@ -11,6 +11,7 @@ import io
 import uuid
 import os
 import json
+import hashlib
 import mimetypes
 import importlib.util
 import re
@@ -367,8 +368,9 @@ def download_remote_file(remote_url: str, dest_path: str, task_id: str | None = 
         session.close()
 
 
-def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
+def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int) -> str:
     chunk_dir = get_chunk_dir(upload_id)
+    sha256_hash = hashlib.sha256()
     with open(target_path, "wb") as target:
         for idx in range(total_chunks):
             chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
@@ -380,6 +382,8 @@ def merge_chunk_files(upload_id: str, target_path: str, total_chunks: int):
                     if not data:
                         break
                     target.write(data)
+                    sha256_hash.update(data)
+    return sha256_hash.hexdigest()
 
 
 def cleanup_chunk_upload(upload_id: str):
@@ -666,10 +670,9 @@ async def complete_task_chunk_upload(
     task_id = f"task_{uuid.uuid4().hex[:8]}"
     temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
-
     try:
-        # Offload file merge to background thread
-        await asyncio.to_thread(merge_chunk_files, upload_id, temp_file_path, total_chunks)
+        # Offload file merge to background thread and get file hash
+        file_hash = await asyncio.to_thread(merge_chunk_files, upload_id, temp_file_path, total_chunks)
         cleanup_chunk_upload(upload_id)
         
         # كتابة ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
@@ -687,13 +690,29 @@ async def complete_task_chunk_upload(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")
 
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
+    existing_task = memory.get_completed_task_by_hash(file_hash)
+    if existing_task:
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        except Exception:
+            pass
+            
+        print(f"[api] complete_task_chunk_upload: found cached task {existing_task['task_id']} for hash {file_hash}")
+        return {
+            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
+        }
+
     task_metadata = {
         key: value for key, value in metadata.items()
         if key not in ["filename", "total_chunks"]
     }
 
     print(f"[api] complete_task_chunk_upload request task_id={task_id} upload_id={upload_id} db={getattr(memory, 'db_path', '<no-db>')}")
-    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
     print(f"[api] complete_task_chunk_upload create_task returned {created} for {task_id}")
     
     # Debug: verify task was created
@@ -886,9 +905,10 @@ async def analyze_image_with_agents(
     temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
     
-    # Stream-write the uploaded file in chunks and enforce a max upload size
+    # Stream-write the uploaded file in chunks, enforce a max upload size, and compute hash
     MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
     size = 0
+    sha256_hash = hashlib.sha256()
     try:
         with open(temp_file_path, "wb") as f:
             while True:
@@ -904,6 +924,7 @@ async def analyze_image_with_agents(
                         pass
                     raise HTTPException(status_code=413, detail="الملف أكبر من الحد المسموح (1 GB)")
                 f.write(chunk)
+                sha256_hash.update(chunk)
     except HTTPException:
         raise
     except Exception as e:
@@ -914,7 +935,6 @@ async def analyze_image_with_agents(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
-        
     # حفظ ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
     if tfw_content:
         base_path, ext = os.path.splitext(temp_file_path)
@@ -926,6 +946,25 @@ async def analyze_image_with_agents(
         world_ext = world_ext_map.get(ext.lower(), '.tfw')
         with open(base_path + world_ext, "w", encoding="utf-8") as wf:
             wf.write(tfw_content)
+
+    file_hash = sha256_hash.hexdigest()
+    
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
+    existing_task = memory.get_completed_task_by_hash(file_hash)
+    if existing_task:
+        # تنظيف الملف المؤقت لأننا لن نحتاجه
+        try:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+        except Exception:
+            pass
+            
+        print(f"[api] analyze_image_with_agents: found cached task {existing_task['task_id']} for hash {file_hash}")
+        return {
+            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
+        }
         
     # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
     task_metadata = {
@@ -955,7 +994,7 @@ async def analyze_image_with_agents(
             print(f"[api] Auto-detected valid GeoTIFF metadata for {temp_file_path}. Promoted to geospatial.")
 
     print(f"[api] analyze_image_with_agents request task_id={task_id} file={file.filename} db={getattr(memory, 'db_path', '<no-db>')}")
-    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
     print(f"[api] analyze_image_with_agents create_task returned {created} for {task_id}")
     
     # Debug: verify task was created
