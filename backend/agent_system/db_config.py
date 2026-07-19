@@ -121,6 +121,38 @@ TABLES_SQL = {
                 FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE
             );
         """
+    },
+    "reference_gis_data": {
+        "postgres": """
+            CREATE TABLE IF NOT EXISTS reference_gis_data (
+                id VARCHAR(100) PRIMARY KEY,
+                city VARCHAR(100) DEFAULT 'Sanaa',
+                category VARCHAR(100) NOT NULL,
+                geom_type VARCHAR(50) NOT NULL,
+                min_lon DOUBLE PRECISION NOT NULL,
+                min_lat DOUBLE PRECISION NOT NULL,
+                max_lon DOUBLE PRECISION NOT NULL,
+                max_lat DOUBLE PRECISION NOT NULL,
+                geometry_geojson TEXT NOT NULL,
+                properties TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """,
+        "sqlite": """
+            CREATE TABLE IF NOT EXISTS reference_gis_data (
+                id TEXT PRIMARY KEY,
+                city TEXT DEFAULT 'Sanaa',
+                category TEXT NOT NULL,
+                geom_type TEXT NOT NULL,
+                min_lon REAL NOT NULL,
+                min_lat REAL NOT NULL,
+                max_lon REAL NOT NULL,
+                max_lat REAL NOT NULL,
+                geometry_geojson TEXT NOT NULL,
+                properties TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """
     }
 }
 

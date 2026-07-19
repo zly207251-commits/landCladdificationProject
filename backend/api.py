@@ -1917,6 +1917,46 @@ async def convert_shp_zip_to_geojson(file: UploadFile = File(...)):
         except Exception:
             pass
 
+# --- نقاط الاتصال الجغرافية المرجعية (Reference GIS Data Endpoints) ---
+
+@app.get("/gis/reference/layers", summary="جلب المعالم الجغرافية المرجعية (OSM) من قاعدة البيانات")
+def get_gis_reference_layers(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    city: str = "Sanaa",
+    category: str = "building"
+):
+    try:
+        features = memory.get_reference_features(city, category, min_lon, min_lat, max_lon, max_lat)
+        return {
+            "status": "success",
+            "type": "FeatureCollection",
+            "features": features
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل جلب المعالم المرجعية: {str(e)}")
+
+@app.post("/gis/reference/fetch-bounds", summary="جلب وتخزين معالم جديدة يدويًا من خريطة الشارع المفتوحة لليمن")
+def fetch_gis_reference_bounds(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    city: str = "Sanaa"
+):
+    try:
+        from utils_osm import fetch_and_save_osm_reference
+        saved_count = fetch_and_save_osm_reference(city, min_lon, min_lat, max_lon, max_lat)
+        return {
+            "status": "success",
+            "message": f"تم جلب وحفظ {saved_count} معلم مرجعي لمدينة {city} بنجاح.",
+            "saved_count": saved_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل استدعاء وحفظ معالم خريطة الشارع المفتوحة: {str(e)}")
+
 if __name__ == "__main__":
     use_reload = os.getenv("BACKEND_RELOAD", "false").lower() in {"1", "true", "yes"}
     uvicorn.run(

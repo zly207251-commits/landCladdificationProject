@@ -470,6 +470,18 @@ class ProjectionAgent(BaseAgent):
                 message_type="SYSTEM",
                 content=f"تم حفظ صورة المعاينة النهائية بنجاح: {processed_filename}"
             )
+            
+            # استدعاء جلب البيانات المرجعية من خريطة الشارع المفتوحة تلقائياً في الخلفية
+            try:
+                import sys
+                import os
+                parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if parent_dir not in sys.path:
+                    sys.path.append(parent_dir)
+                from utils_osm import trigger_osm_fetch_in_background
+                trigger_osm_fetch_in_background(task_id)
+            except Exception as e:
+                print(f"[ProjectionAgent] Warning: failed to trigger background OSM fetch: {e}")
         except Exception as err:
             self.message_bus.publish(
                 task_id=task_id,

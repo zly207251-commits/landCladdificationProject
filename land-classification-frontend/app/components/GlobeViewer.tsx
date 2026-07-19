@@ -134,6 +134,208 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
+  // الطبقات الجغرافية المرجعية (OSM)
+  const [showBuildings, setShowBuildings] = useState<boolean>(false);
+  const [showRoads, setShowRoads] = useState<boolean>(false);
+  const [showWaterways, setShowWaterways] = useState<boolean>(false);
+  const refDataSourcesRef = useRef<Record<string, any>>({});
+
+  // المحافظات اليمنية وإحداثياتها الجغرافية الافتراضية
+  const YEMEN_GOVERNORATES = {
+    sanaa: { name: "Sanaa", label: "أمانة العاصمة / صنعاء", min_lon: 44.15, min_lat: 15.25, max_lon: 44.25, max_lat: 15.45 },
+    aden: { name: "Aden", label: "محافظة عدن", min_lon: 44.95, min_lat: 12.75, max_lon: 45.10, max_lat: 12.90 },
+    taiz: { name: "Taiz", label: "محافظة تعز", min_lon: 43.95, min_lat: 13.52, max_lon: 44.10, max_lat: 13.65 },
+    hudaydah: { name: "Al-Hudaydah", label: "محافظة الحديدة", min_lon: 42.90, min_lat: 14.73, max_lon: 43.05, max_lat: 14.85 },
+    hadramout: { name: "Hadramout", label: "حضرموت (المكلا)", min_lon: 49.08, min_lat: 14.50, max_lon: 49.20, max_lat: 14.60 },
+    marib: { name: "Marib", label: "محافظة مأرب", min_lon: 45.28, min_lat: 15.42, max_lon: 45.36, max_lat: 15.50 }
+  };
+
+  const [selectedGov, setSelectedGov] = useState<string>("sanaa");
+  const [customGovName, setCustomGovName] = useState<string>("");
+  const [govLoading, setGovLoading] = useState<boolean>(false);
+  const [govSuccessMsg, setGovSuccessMsg] = useState<string | null>(null);
+  const [govErrorMsg, setGovErrorMsg] = useState<string | null>(null);
+
+  // جلب وتغذية معالم المحافظة من خريطة الشارع المفتوحة
+  const handleFetchGovernorateData = async () => {
+    setGovLoading(true);
+    setGovSuccessMsg(null);
+    setGovErrorMsg(null);
+    
+    const Cesium = (window as any).Cesium;
+    const base = API_CONFIG.baseURL || 'http://localhost:8000';
+    
+    let minLon = 0, minLat = 0, maxLon = 0, maxLat = 0;
+    let name = "";
+    
+    if (selectedGov === "custom") {
+      if (!customGovName.trim()) {
+        setGovErrorMsg("يرجى إدخال اسم المدينة أو المحافظة");
+        setGovLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(customGovName)}&limit=1`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.length > 0) {
+            const bbox = data[0].boundingbox;
+            minLat = parseFloat(bbox[0]);
+            maxLat = parseFloat(bbox[1]);
+            minLon = parseFloat(bbox[2]);
+            maxLon = parseFloat(bbox[3]);
+            name = customGovName;
+            
+            // تحديد الحجم الأقصى للمربع الجغرافي لمنع الانهيار
+            if (Math.abs(maxLat - minLat) > 0.15 || Math.abs(maxLon - minLon) > 0.15) {
+              const centerLat = (minLat + maxLat) / 2;
+              const centerLon = (minLon + maxLon) / 2;
+              minLat = centerLat - 0.05;
+              maxLat = centerLat + 0.05;
+              minLon = centerLon - 0.05;
+              maxLon = centerLon + 0.05;
+            }
+          } else {
+            setGovErrorMsg("لم يتم العثور على إحداثيات للمنطقة المكتوبة");
+            setGovLoading(false);
+            return;
+          }
+        } else {
+          setGovErrorMsg("فشل البحث الجغرافي عن المحافظة");
+          setGovLoading(false);
+          return;
+        }
+      } catch (e) {
+        setGovErrorMsg("حدث خطأ أثناء الاتصال بخدمة البحث");
+        setGovLoading(false);
+        return;
+      }
+    } else {
+      const govData = YEMEN_GOVERNORATES[selectedGov as keyof typeof YEMEN_GOVERNORATES];
+      minLon = govData.min_lon;
+      minLat = govData.min_lat;
+      maxLon = govData.max_lon;
+      maxLat = govData.max_lat;
+      name = govData.name;
+    }
+    
+    try {
+      const res = await fetch(
+        `${base}/gis/reference/fetch-bounds?min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}&city=${encodeURIComponent(name)}`,
+        { method: "POST" }
+      );
+      if (res.ok) {
+        const result = await res.json();
+        setGovSuccessMsg(result.message || `تم جلب وحفظ البيانات بنجاح!`);
+        
+        // الطيران للموقع الجديد في Cesium
+        if (viewerRef.current && Cesium) {
+          viewerRef.current.camera.flyTo({
+            destination: Cesium.Rectangle.fromDegrees(minLon - 0.01, minLat - 0.01, maxLon + 0.01, maxLat + 0.01)
+          });
+        }
+        
+        // تشغيل كل الطبقات تلقائياً لعرض المعالم فوراً
+        setShowBuildings(true);
+        setShowRoads(true);
+        setShowWaterways(true);
+      } else {
+        const errData = await res.json().catch(() => ({ detail: "خطأ غير معروف" }));
+        setGovErrorMsg(`فشل الجلب: ${errData.detail || res.statusText}`);
+      }
+    } catch (e: any) {
+      setGovErrorMsg(`حدث خطأ أثناء الاتصال بالخادم: ${e.message || e}`);
+    }
+    setGovLoading(false);
+  };
+
+  // تحديث الطبقات الجغرافية المرجعية ثلاثية الأبعاد بناءً على مجال رؤية الكاميرا
+  const updateReferenceLayers3D = async () => {
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) return;
+    
+    const camera = viewerRef.current.camera;
+    const rect = camera.computeViewRectangle(viewerRef.current.scene.globe.ellipsoid);
+    if (!rect) return;
+    
+    const minLon = Cesium.Math.toDegrees(rect.west);
+    const minLat = Cesium.Math.toDegrees(rect.south);
+    const maxLon = Cesium.Math.toDegrees(rect.east);
+    const maxLat = Cesium.Math.toDegrees(rect.north);
+    
+    const base = API_CONFIG.baseURL || 'http://localhost:8000';
+    const categories = [
+      { name: 'building', active: showBuildings, color: Cesium.Color.RED },
+      { name: 'road', active: showRoads, color: Cesium.Color.ORANGE },
+      { name: 'waterway', active: showWaterways, color: Cesium.Color.AQUA }
+    ];
+    
+    for (const cat of categories) {
+      if (refDataSourcesRef.current[cat.name]) {
+        try {
+          viewerRef.current.dataSources.remove(refDataSourcesRef.current[cat.name]);
+        } catch (e) {}
+        refDataSourcesRef.current[cat.name] = null;
+      }
+      
+      if (cat.active) {
+        try {
+          const res = await fetch(`${base}/gis/reference/layers?city=Sanaa&category=${cat.name}&min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.features && data.features.length > 0) {
+              const dataSource = await Cesium.GeoJsonDataSource.load(data, {
+                stroke: cat.color,
+                fill: Cesium.Color.TRANSPARENT,
+                strokeWidth: 3
+              });
+              
+              const entities = dataSource.entities.values;
+              for (const entity of entities) {
+                if (entity.polygon) {
+                  entity.polygon.fill = new Cesium.ConstantProperty(false);
+                  entity.polygon.outline = new Cesium.ConstantProperty(true);
+                  entity.polygon.outlineColor = new Cesium.ConstantProperty(cat.color);
+                }
+              }
+              
+              viewerRef.current.dataSources.add(dataSource);
+              refDataSourcesRef.current[cat.name] = dataSource;
+            }
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch 3D reference layer for ${cat.name}:`, e);
+        }
+      }
+    }
+  };
+
+  const toggleReferenceLayer = (category: 'building' | 'road' | 'waterway') => {
+    if (category === 'building') setShowBuildings(prev => !prev);
+    if (category === 'road') setShowRoads(prev => !prev);
+    if (category === 'waterway') setShowWaterways(prev => !prev);
+  };
+
+  // استدعاء التحديث وتثبيت المستمع لحركة الكاميرا
+  useEffect(() => {
+    const Cesium = (window as any).Cesium;
+    if (!viewerRef.current || !Cesium) return;
+    
+    updateReferenceLayers3D();
+    
+    const removeListener = viewerRef.current.camera.moveEnd.addEventListener(() => {
+      updateReferenceLayers3D();
+    });
+    
+    return () => {
+      if (removeListener) {
+        try {
+          removeListener();
+        } catch (e) {}
+      }
+    };
+  }, [showBuildings, showRoads, showWaterways]);
+
   const createImageryProvider = (providerId: string) => {
     const Cesium = (window as any).Cesium;
     if (!Cesium) return null;
@@ -262,10 +464,12 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                     const layerType = props.layer_name ? props.layer_name.getValue() : 'unknown';
                     
                     let hexColor = '#cccccc';
-                    if (layerType && LAYER_STYLES.agents[layerType]) {
-                      hexColor = LAYER_STYLES.agents[layerType].color;
-                    } else if (layerType && LAYER_STYLES.classifications[layerType]) {
-                      hexColor = LAYER_STYLES.classifications[layerType].color;
+                    const agents = LAYER_STYLES.agents as Record<string, any>;
+                    const classifications = LAYER_STYLES.classifications as Record<string, any>;
+                    if (layerType && agents[layerType]) {
+                      hexColor = agents[layerType].color;
+                    } else if (layerType && classifications[layerType]) {
+                      hexColor = classifications[layerType].color;
                     }
                     
                     const cesiumColor = Cesium.Color.fromCssColorString(hexColor);
@@ -883,6 +1087,50 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                       </button>
                     </div>
                   )}
+
+                  <div className="h-px bg-white/10 w-full" />
+
+                  {/* طبقات الإسقاط المرجعية OSM */}
+                  <div className="space-y-3">
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block text-right">طبقات الإسقاط المرجعية (OSM)</label>
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => toggleReferenceLayer('building')}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          showBuildings ? 'bg-red-500/20 border-red-500 text-white' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-xs font-medium">مباني خريطة الشارع المفتوحة</span>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${showBuildings ? 'border-red-500 bg-red-500' : 'border-slate-500'}`}>
+                          {showBuildings && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => toggleReferenceLayer('road')}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          showRoads ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-xs font-medium">شبكة الطرق والشوارع</span>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${showRoads ? 'border-amber-500 bg-amber-500' : 'border-slate-500'}`}>
+                          {showRoads && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => toggleReferenceLayer('waterway')}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          showWaterways ? 'bg-blue-500/20 border-blue-500 text-white' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-xs font-medium">مجاري مياه ووديان صنعاء</span>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${showWaterways ? 'border-blue-500 bg-blue-500' : 'border-slate-500'}`}>
+                          {showWaterways && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </div>
+                      </button>
+                    </div>
+                  </div>
 
                   <div className="h-px bg-white/10 w-full" />
 

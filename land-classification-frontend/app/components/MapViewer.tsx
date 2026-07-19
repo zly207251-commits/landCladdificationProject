@@ -60,6 +60,15 @@ export default function MapViewer({
   const [useFallbackTiles, setUseFallbackTiles] = useState<boolean>(false);
   const [activeTileSourceIndex, setActiveTileSourceIndex] = useState<number>(0);
 
+  // الطبقات الجغرافية المرجعية (OSM)
+  const [refBuildings, setRefBuildings] = useState<any>(null);
+  const [refRoads, setRefRoads] = useState<any>(null);
+  const [refWaterways, setRefWaterways] = useState<any>(null);
+  
+  const [showBuildings, setShowBuildings] = useState<boolean>(false);
+  const [showRoads, setShowRoads] = useState<boolean>(false);
+  const [showWaterways, setShowWaterways] = useState<boolean>(false);
+
   const errorTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6GXo9kAAAAASUVORK5CYII=';
   const fallbackTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAAP0lEQVR4Xu3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8FchDgAB/tzDEwAAAABJRU5ErkJggg==';
 
@@ -100,6 +109,93 @@ export default function MapViewer({
     setUseFallbackTiles(false);
     setActiveTileSourceIndex(0);
   };
+
+  // تحديث الطبقات المرجعية بناءً على حدود الرؤية الحالية
+  const updateReferenceLayers = async () => {
+    if (!map) return;
+    const bounds = map.getBounds();
+    const minLon = bounds.getWest();
+    const minLat = bounds.getSouth();
+    const maxLon = bounds.getEast();
+    const maxLat = bounds.getNorth();
+    const base = API_CONFIG.baseURL || 'http://localhost:8000';
+
+    if (showBuildings) {
+      try {
+        const res = await fetch(`${base}/gis/reference/layers?city=Sanaa&category=building&min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}`);
+        if (res.ok) {
+          const data = await res.json();
+          setRefBuildings(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch reference buildings:", e);
+      }
+    } else {
+      setRefBuildings(null);
+    }
+
+    if (showRoads) {
+      try {
+        const res = await fetch(`${base}/gis/reference/layers?city=Sanaa&category=road&min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}`);
+        if (res.ok) {
+          const data = await res.json();
+          setRefRoads(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch reference roads:", e);
+      }
+    } else {
+      setRefRoads(null);
+    }
+
+    if (showWaterways) {
+      try {
+        const res = await fetch(`${base}/gis/reference/layers?city=Sanaa&category=waterway&min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}`);
+        if (res.ok) {
+          const data = await res.json();
+          setRefWaterways(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch reference waterways:", e);
+      }
+    } else {
+      setRefWaterways(null);
+    }
+  };
+
+  // الاستماع لحركة الخريطة لتحديث البيانات
+  useEffect(() => {
+    if (!map) return;
+    const handleMoveEnd = () => {
+      updateReferenceLayers();
+    };
+    map.on('moveend', handleMoveEnd);
+    updateReferenceLayers();
+    return () => {
+      map.off('moveend', handleMoveEnd);
+    };
+  }, [map, showBuildings, showRoads, showWaterways]);
+
+  // الاستماع لتبديل تشغيل وإطفاء الطبقات المرجعية من قائمة الخريطة
+  useEffect(() => {
+    if (!map) return;
+    const handleOverlayAdd = (e: any) => {
+      if (e.name === "مباني OSM المرجعية") setShowBuildings(true);
+      if (e.name === "طرق OSM المرجعية") setShowRoads(true);
+      if (e.name === "مجاري مياه OSM المرجعية") setShowWaterways(true);
+    };
+    const handleOverlayRemove = (e: any) => {
+      if (e.name === "مباني OSM المرجعية") setShowBuildings(false);
+      if (e.name === "طرق OSM المرجعية") setShowRoads(false);
+      if (e.name === "مجاري مياه OSM المرجعية") setShowWaterways(false);
+    };
+    map.on('overlayadd', handleOverlayAdd);
+    map.on('overlayremove', handleOverlayRemove);
+    return () => {
+      map.off('overlayadd', handleOverlayAdd);
+      map.off('overlayremove', handleOverlayRemove);
+    };
+  }, [map]);
 
   // أحداث الفأرة لاختيار المستطيل
   useEffect(() => {
@@ -451,6 +547,48 @@ export default function MapViewer({
         <LayersControl position="topright">
           <LayersControl.Overlay name="المعالم الجغرافية" checked>
             {renderGeoJSON()}
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="مباني OSM المرجعية">
+            {refBuildings && (
+              <GeoJSON 
+                key={`ref-b-${refBuildings.features?.length}`}
+                data={refBuildings}
+                style={() => ({
+                  color: '#e74c3c',
+                  weight: 2,
+                  fillOpacity: 0
+                })}
+              />
+            )}
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="طرق OSM المرجعية">
+            {refRoads && (
+              <GeoJSON
+                key={`ref-r-${refRoads.features?.length}`}
+                data={refRoads}
+                style={() => ({
+                  color: '#f39c12',
+                  weight: 2.5,
+                  fillOpacity: 0
+                })}
+              />
+            )}
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="مجاري مياه OSM المرجعية">
+            {refWaterways && (
+              <GeoJSON
+                key={`ref-w-${refWaterways.features?.length}`}
+                data={refWaterways}
+                style={() => ({
+                  color: '#3498db',
+                  weight: 2.5,
+                  fillOpacity: 0
+                })}
+              />
+            )}
           </LayersControl.Overlay>
 
           {/* طبقة الشبكة (للتجربة) */}

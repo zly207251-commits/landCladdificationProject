@@ -162,6 +162,15 @@ class SharedMemory:
                         FOREIGN KEY (task_id) REFERENCES tasks (task_id) ON DELETE CASCADE
                     )
                 """)
+            
+            # 5. إنشاء جدول البيانات الجغرافية المرجعية (reference_gis_data) وفهرستها مكانياً
+            cursor.execute(TABLES_SQL["reference_gis_data"][db_type])
+            try:
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ref_gis_bbox ON reference_gis_data (min_lon, min_lat, max_lon, max_lat);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ref_gis_cat ON reference_gis_data (category);")
+            except Exception:
+                pass
+                
             conn.commit()
 
     # --- عمليات إدارة المهام (Tasks) ---
@@ -685,3 +694,122 @@ class SharedMemory:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def save_reference_features(self, city: str, features: List[Dict[str, Any]]) -> int:
+        """حفظ قائمة بالمعالم الجغرافية المرجعية لقاعدة البيانات."""
+        is_pg = is_postgresql()
+        saved_count = 0
+        
+        def get_bbox(geometry: dict):
+            coords = geometry.get("coordinates", [])
+            flat_coords = []
+            def flatten(lst):
+                if not lst:
+                    return
+                if isinstance(lst[0], (int, float)):
+                    flat_coords.append(lst)
+                    return
+                for item in lst:
+                    flatten(item)
+            
+            flatten(coords)
+            if not flat_coords:
+                return 0.0, 0.0, 0.0, 0.0
+            
+            lons = [c[0] for c in flat_coords]
+            lats = [c[1] for c in flat_coords]
+            return min(lons), min(lats), max(lons), max(lats)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for f in features:
+                f_id = f.get("id") or f"ref_{city}_{saved_count}_{datetime.now().microsecond}"
+                properties = f.get("properties", {})
+                geometry = f.get("geometry", {})
+                if not geometry:
+                    continue
+                
+                geom_type = geometry.get("type", "Polygon")
+                min_lon, min_lat, max_lon, max_lat = get_bbox(geometry)
+                
+                category = properties.get("category") or properties.get("type") or "building"
+                
+                # توحيد التسمية
+                category = category.lower()
+                if "building" in category:
+                    category = "building"
+                elif any(x in category for x in ["road", "highway", "street"]):
+                    category = "road"
+                elif any(x in category for x in ["water", "river", "stream", "canal", "waterway"]):
+                    category = "waterway"
+                
+                geom_json = json.dumps(geometry)
+                props_json = json.dumps(properties)
+                
+                if is_pg:
+                    cursor.execute(
+                        """
+                        INSERT INTO reference_gis_data (id, city, category, geom_type, min_lon, min_lat, max_lon, max_lat, geometry_geojson, properties)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET 
+                            geometry_geojson = EXCLUDED.geometry_geojson,
+                            properties = EXCLUDED.properties
+                        """,
+                        (f_id, city, category, geom_type, min_lon, min_lat, max_lon, max_lat, geom_json, props_json)
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO reference_gis_data (id, city, category, geom_type, min_lon, min_lat, max_lon, max_lat, geometry_geojson, properties)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (f_id, city, category, geom_type, min_lon, min_lat, max_lon, max_lat, geom_json, props_json)
+                    )
+                saved_count += 1
+            conn.commit()
+        return saved_count
+
+    def get_reference_features(self, city: str, category: str, min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> List[Dict[str, Any]]:
+        """جلب المعالم المرجعية المطابقة للفئة ومربع إحداثيات نافذة الرؤية."""
+        is_pg = is_postgresql()
+        with self._get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor) if is_pg else conn.cursor()
+            
+            # استعلام مكاني باستخدام تقاطع المربعات المحيطة
+            cursor.execute(
+                self._qp("""
+                    SELECT id, category, geom_type, geometry_geojson, properties 
+                    FROM reference_gis_data 
+                    WHERE city = %s 
+                      AND category = %s 
+                      AND min_lon <= %s 
+                      AND max_lon >= %s 
+                      AND min_lat <= %s 
+                      AND max_lat >= %s
+                """),
+                (city, category, max_lon, min_lon, max_lat, min_lat)
+            )
+            rows = cursor.fetchall()
+            
+            features = []
+            for r in rows:
+                row_dict = dict(r)
+                try:
+                    geom = json.loads(row_dict["geometry_geojson"])
+                except Exception:
+                    geom = {}
+                try:
+                    props = json.loads(row_dict["properties"])
+                except Exception:
+                    props = {}
+                
+                props["id"] = row_dict["id"]
+                props["category"] = row_dict["category"]
+                
+                features.append({
+                    "type": "Feature",
+                    "id": row_dict["id"],
+                    "geometry": geom,
+                    "properties": props
+                })
+            return features
