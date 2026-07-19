@@ -136,6 +136,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
 
   // الطبقات الجغرافية المرجعية (OSM)
   const [showBuildings, setShowBuildings] = useState<boolean>(false);
+  const [showGoogleBuildings, setShowGoogleBuildings] = useState<boolean>(false);
   const [showRoads, setShowRoads] = useState<boolean>(false);
   const [showWaterways, setShowWaterways] = useState<boolean>(false);
   const refDataSourcesRef = useRef<Record<string, any>>({});
@@ -155,6 +156,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [govLoading, setGovLoading] = useState<boolean>(false);
   const [govSuccessMsg, setGovSuccessMsg] = useState<string | null>(null);
   const [govErrorMsg, setGovErrorMsg] = useState<string | null>(null);
+  const [fetchDataType, setFetchDataType] = useState<"osm" | "google">("osm");
 
   // جلب وتغذية معالم المحافظة من خريطة الشارع المفتوحة
   const handleFetchGovernorateData = async () => {
@@ -219,9 +221,11 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
       name = govData.name;
     }
     
+    const endpoint = fetchDataType === "google" ? "fetch-google-bounds" : "fetch-bounds";
+    
     try {
       const res = await fetch(
-        `${base}/gis/reference/fetch-bounds?min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}&city=${encodeURIComponent(name)}`,
+        `${base}/gis/reference/${endpoint}?min_lon=${minLon}&min_lat=${minLat}&max_lon=${maxLon}&max_lat=${maxLat}&city=${encodeURIComponent(name)}`,
         { method: "POST" }
       );
       if (res.ok) {
@@ -236,9 +240,13 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         }
         
         // تشغيل كل الطبقات تلقائياً لعرض المعالم فوراً
-        setShowBuildings(true);
-        setShowRoads(true);
-        setShowWaterways(true);
+        if (fetchDataType === "google") {
+          setShowGoogleBuildings(true);
+        } else {
+          setShowBuildings(true);
+          setShowRoads(true);
+          setShowWaterways(true);
+        }
       } else {
         const errData = await res.json().catch(() => ({ detail: "خطأ غير معروف" }));
         setGovErrorMsg(`فشل الجلب: ${errData.detail || res.statusText}`);
@@ -266,6 +274,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     const base = API_CONFIG.baseURL || 'http://localhost:8000';
     const categories = [
       { name: 'building', active: showBuildings, color: Cesium.Color.RED },
+      { name: 'building_google', active: showGoogleBuildings, color: Cesium.Color.YELLOW },
       { name: 'road', active: showRoads, color: Cesium.Color.ORANGE },
       { name: 'waterway', active: showWaterways, color: Cesium.Color.AQUA }
     ];
@@ -310,8 +319,9 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     }
   };
 
-  const toggleReferenceLayer = (category: 'building' | 'road' | 'waterway') => {
+  const toggleReferenceLayer = (category: 'building' | 'building_google' | 'road' | 'waterway') => {
     if (category === 'building') setShowBuildings(prev => !prev);
+    if (category === 'building_google') setShowGoogleBuildings(prev => !prev);
     if (category === 'road') setShowRoads(prev => !prev);
     if (category === 'waterway') setShowWaterways(prev => !prev);
   };
@@ -334,7 +344,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
         } catch (e) {}
       }
     };
-  }, [showBuildings, showRoads, showWaterways]);
+  }, [showBuildings, showGoogleBuildings, showRoads, showWaterways]);
 
   const createImageryProvider = (providerId: string) => {
     const Cesium = (window as any).Cesium;
@@ -1107,6 +1117,18 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                       </button>
 
                       <button
+                        onClick={() => toggleReferenceLayer('building_google')}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          showGoogleBuildings ? 'bg-yellow-500/20 border-yellow-500 text-white' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-xs font-medium">مباني Google/Microsoft (AI)</span>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${showGoogleBuildings ? 'border-yellow-500 bg-yellow-500' : 'border-slate-500'}`}>
+                          {showGoogleBuildings && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </div>
+                      </button>
+
+                      <button
                         onClick={() => toggleReferenceLayer('road')}
                         className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
                           showRoads ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
@@ -1130,6 +1152,82 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                         </div>
                       </button>
                     </div>
+                  </div>
+
+                  <div className="h-px bg-white/10 w-full" />
+
+                  {/* بوابة جلب معالم المحافظات اليمنية */}
+                  <div className="space-y-4 p-4 bg-white/5 rounded-xl border border-white/5 text-right">
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">جلب معالم المحافظات (OSM)</label>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-slate-400 block">اختر المحافظة لطلب حدودها ومعالمها:</label>
+                      <select
+                        value={selectedGov}
+                        onChange={(e) => setSelectedGov(e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                      >
+                        <option value="sanaa">أمانة العاصمة / صنعاء</option>
+                        <option value="aden">محافظة عدن</option>
+                        <option value="taiz">محافظة تعز</option>
+                        <option value="hudaydah">محافظة الحديدة</option>
+                        <option value="hadramout">حضرموت (المكلا)</option>
+                        <option value="marib">محافظة مأرب</option>
+                        <option value="custom">إدخال مدينة/منطقة أخرى...</option>
+                      </select>
+                    </div>
+
+                    {selectedGov === "custom" && (
+                      <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
+                        <label className="text-[10px] text-slate-400 block">اكتب اسم المدينة بالإنجليزية أو العربية (مثال: Dhamar):</label>
+                        <input
+                          type="text"
+                          value={customGovName}
+                          onChange={(e) => setCustomGovName(e.target.value)}
+                          placeholder="مثلاً: Dhamar أو ذمار"
+                          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500 text-right"
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-slate-400 block">نوع البيانات المطلوب جلبها:</label>
+                      <select
+                        value={fetchDataType}
+                        onChange={(e) => setFetchDataType(e.target.value as "osm" | "google")}
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
+                      >
+                        <option value="osm">معالم خريطة الشارع المفتوحة (OSM)</option>
+                        <option value="google">مباني جوجل الحقيقية بالذكاء الاصطناعي (Google Open Buildings)</option>
+                      </select>
+                    </div>
+
+                    <button
+                      onClick={handleFetchGovernorateData}
+                      disabled={govLoading}
+                      className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      {govLoading ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>جاري تحميل المعالم...</span>
+                        </>
+                      ) : (
+                        <span>تأكيد جلب وحفظ البيانات الجغرافية</span>
+                      )}
+                    </button>
+
+                    {govSuccessMsg && (
+                      <div className="p-2.5 bg-green-500/10 border border-green-500/20 text-[10px] text-green-400 rounded-lg leading-relaxed text-right">
+                        ✓ {govSuccessMsg}
+                      </div>
+                    )}
+
+                    {govErrorMsg && (
+                      <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 rounded-lg leading-relaxed text-right">
+                        ⚠️ {govErrorMsg}
+                      </div>
+                    )}
                   </div>
 
                   <div className="h-px bg-white/10 w-full" />

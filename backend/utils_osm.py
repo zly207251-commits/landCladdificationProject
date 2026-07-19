@@ -149,3 +149,70 @@ def trigger_osm_fetch_in_background(task_id: str, city: str = "Sanaa"):
 
     thread = Thread(target=run, daemon=True)
     thread.start()
+
+
+def fetch_real_google_buildings(city: str, min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> int:
+    """جلب مباني جوجل الحقيقية بالكامل من Overture Maps لمنطقة جغرافية معينة وحفظها في قاعدة البيانات."""
+    import subprocess
+    import json
+    import os
+    
+    output_path = "temp_overture_buildings.geojson"
+    
+    # تحضير أمر تشغيل Overture Maps Downloader
+    cmd = [
+        "overturemaps", "download",
+        "--type=building",
+        f"--bbox={min_lon},{min_lat},{max_lon},{max_lat}",
+        "-f", "geojson",
+        "-o", output_path
+    ]
+    
+    try:
+        print(f"[Overture Fetch] Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        print("[Overture Fetch] Download completed successfully.")
+        
+        if os.path.exists(output_path):
+            with open(output_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                
+            features = data.get("features", [])
+            print(f"[Overture Fetch] Read {len(features)} building footprints. Saving to database...")
+            
+            formatted_features = []
+            for feat in features:
+                props = feat.get("properties", {})
+                # تصنيفها كمباني جوجل لتمييزها وتلوينها
+                props["category"] = "building_google"
+                props["source"] = "Google Open Buildings"
+                
+                formatted_features.append({
+                    "type": "Feature",
+                    "id": feat.get("id") or f"google_{city}_{np.random.randint(100000)}",
+                    "geometry": feat.get("geometry"),
+                    "properties": props
+                })
+                
+            mem = SharedMemory()
+            saved = mem.save_reference_features(city, formatted_features)
+            print(f"[Overture Fetch] Successfully saved {saved} building footprints to the database!")
+            
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
+                
+            return saved
+        else:
+            print("[Overture Fetch] Error: Output file was not created.")
+            return 0
+    except Exception as e:
+        print(f"[Overture Fetch] Error downloading or processing Overture buildings: {e}")
+        # التنظيف في حال وجود ملف متبقي
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except Exception:
+            pass
+        return 0

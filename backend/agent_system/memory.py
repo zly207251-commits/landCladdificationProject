@@ -736,7 +736,9 @@ class SharedMemory:
                 
                 # توحيد التسمية
                 category = category.lower()
-                if "building" in category:
+                if "building_google" in category:
+                    category = "building_google"
+                elif "building" in category:
                     category = "building"
                 elif any(x in category for x in ["road", "highway", "street"]):
                     category = "road"

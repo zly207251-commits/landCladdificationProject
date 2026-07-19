@@ -1957,6 +1957,25 @@ def fetch_gis_reference_bounds(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل استدعاء وحفظ معالم خريطة الشارع المفتوحة: {str(e)}")
 
+@app.post("/gis/reference/fetch-google-bounds", summary="جلب وتخزين مباني جوجل ومايكروسوفت الحقيقية (AI) لمنطقة معينة")
+def fetch_gis_google_reference_bounds(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    city: str = "Sanaa"
+):
+    try:
+        from utils_osm import fetch_real_google_buildings
+        saved_count = fetch_real_google_buildings(city, min_lon, min_lat, max_lon, max_lat)
+        return {
+            "status": "success",
+            "message": f"تم جلب وحفظ {saved_count} مبنى حقيقي من جوجل لمدينة {city} بنجاح.",
+            "saved_count": saved_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل استيراد مباني جوجل من أوفيرتشر: {str(e)}")
+
 if __name__ == "__main__":
     use_reload = os.getenv("BACKEND_RELOAD", "false").lower() in {"1", "true", "yes"}
     uvicorn.run(

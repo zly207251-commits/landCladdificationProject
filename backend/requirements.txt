@@ -22,4 +22,5 @@ pyproj
 psycopg2-binary
 celery
 redis
+overturemaps
 psutil
