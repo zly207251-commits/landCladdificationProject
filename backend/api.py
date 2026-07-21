@@ -1680,7 +1680,8 @@ def crop_from_tiles(
             # Build URL (support both {x}/{y}/{z} and {z}/{x}/{y})
             url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
             try:
-                resp = requests.get(url, timeout=10)
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+                resp = requests.get(url, headers=headers, timeout=10)
                 resp.raise_for_status()
                 img = PILImage.open(io.BytesIO(resp.content)).convert('RGBA')
             except Exception:
@@ -1764,6 +1765,164 @@ def crop_from_tiles(
             dst.write(rgb)
 
         return FileResponse(out_path, media_type='image/tiff', filename=out_name)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل تركيب البلاطات وتصدير GeoTIFF: {str(e)}")
+
+
+@app.get("/crop/analyze_from_tiles", summary="تحليل من مصدر بلاطات (XYZ/WMTS) عبر تركيب البلاطات وتوليد ملف GeoJSON للمستخدم")
+def analyze_from_tiles(
+    tile_template: str,
+    zoom: int,
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    tile_size: int = 256
+):
+    """
+    يحمّل البلاطات من قالب URL مثل https://.../{z}/{x}/{y}.png عند مستوى zoom ويقوم بتركيبها
+    ثم يُخرج GeoTIFF يحتوي CRS=EPSG:3857 يغطي المنطقة المطلوبة.
+    تحذير: قد تنطبق قيود ترخيص عند استخدام مزودين مثل Google — تأكد من الصلاحيات.
+    """
+    if rasterio is None:
+        raise HTTPException(status_code=500, detail="Rasterio مطلوب لإنشاء GeoTIFF من البلاطات.")
+
+    try:
+        # Normalize bbox
+        min_lon_val = min(min_lon, max_lon)
+        max_lon_val = max(min_lon, max_lon)
+        min_lat_val = min(min_lat, max_lat)
+        max_lat_val = max(min_lat, max_lat)
+
+        # Compute tiles covering bbox
+        tile_list = list(mercantile.tiles(min_lon_val, min_lat_val, max_lon_val, max_lat_val, zoom))
+        if not tile_list:
+            raise ValueError("لم يتم العثور على بلاطات تغطي المنطقة عند zoom المحدد.")
+
+        xs = [t.x for t in tile_list]
+        ys = [t.y for t in tile_list]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        cols = max_x - min_x + 1
+        rows = max_y - min_y + 1
+
+        # Create canvas
+        canvas_w = cols * tile_size
+        canvas_h = rows * tile_size
+        from PIL import Image as PILImage
+        canvas = PILImage.new('RGBA', (canvas_w, canvas_h))
+
+        # Download and paste tiles
+        for tile in tile_list:
+            # Build URL (support both {x}/{y}/{z} and {z}/{x}/{y})
+            url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+                resp = requests.get(url, headers=headers, timeout=10)
+                resp.raise_for_status()
+                img = PILImage.open(io.BytesIO(resp.content)).convert('RGBA')
+            except Exception:
+                # missing tile or error -> use transparent tile
+                img = PILImage.new('RGBA', (tile_size, tile_size), (0, 0, 0, 0))
+
+            px = (tile.x - min_x) * tile_size
+            py = (tile.y - min_y) * tile_size
+            canvas.paste(img, (px, py))
+
+        # Transform target user bounding box from EPSG:4326 to EPSG:3857
+        transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+        x_min, y_min = transformer.transform(min_lon_val, min_lat_val)
+        x_max, y_max = transformer.transform(max_lon_val, max_lat_val)
+
+        # Get exact Web Mercator bounds of stitched tiles using mercantile.xy_bounds
+        b_min = mercantile.xy_bounds(min_x, max_y, zoom)
+        b_max = mercantile.xy_bounds(max_x, min_y, zoom)
+        
+        tile_left = b_min.left
+        tile_bottom = b_min.bottom
+        tile_right = b_max.right
+        tile_top = b_max.top
+
+        res_x = (tile_right - tile_left) / canvas_w
+        res_y = (tile_top - tile_bottom) / canvas_h
+
+        # Compute exact pixel offsets corresponding to user selected bounding box
+        px_left = max(0, int(round((x_min - tile_left) / res_x)))
+        px_right = min(canvas_w, int(round((x_max - tile_left) / res_x)))
+        px_top = max(0, int(round((tile_top - y_max) / res_y)))
+        px_bottom = min(canvas_h, int(round((tile_top - y_min) / res_y)))
+
+        # Ensure valid crop box dimensions (at least 1 pixel wide/high)
+        if px_right <= px_left:
+            px_right = px_left + 1
+        if px_bottom <= px_top:
+            px_bottom = px_top + 1
+
+        # Crop the canvas to the user's exact bounding box
+        cropped_canvas = canvas.crop((px_left, px_top, px_right, px_bottom))
+        out_w, out_h = cropped_canvas.size
+
+        # Compute exact Web Mercator bounds of cropped area
+        left = tile_left + px_left * res_x
+        top = tile_top - px_top * res_y
+        right = tile_left + px_right * res_x
+        bottom = tile_top - px_bottom * res_y
+
+        res_x_cropped = (right - left) / out_w
+        res_y_cropped = (top - bottom) / out_h
+        out_transform = rasterio.transform.from_origin(left, top, res_x_cropped, res_y_cropped)
+
+        # Convert cropped canvas to numpy array and write as GeoTIFF (RGB)
+        arr = np.array(cropped_canvas)
+        # arr shape: (h,w,4) RGBA -> take RGB, ignore alpha
+        if arr.ndim == 3 and arr.shape[2] >= 3:
+            rgb = arr[:, :, :3]
+        else:
+            rgb = np.stack([arr, arr, arr], axis=-1)
+
+        # move axis to (bands, rows, cols)
+        rgb = np.moveaxis(rgb, -1, 0)
+
+        out_name = f"tiles_crop_{uuid.uuid4().hex[:8]}.tiff"
+        out_path = os.path.join(UPLOAD_DIR, out_name)
+
+        profile = {
+            'driver': 'GTiff',
+            'dtype': 'uint8',
+            'count': rgb.shape[0],
+            'height': out_h,
+            'width': out_w,
+            'transform': out_transform,
+            'crs': 'EPSG:3857',
+            'compress': 'LZW',
+            'tiled': True
+        }
+
+        with rasterio.open(out_path, 'w', **profile) as dst:
+            dst.write(rgb)
+
+        
+        # ---- Start Background Task ----
+        task_id = "task_" + uuid.uuid4().hex[:8]
+        file_hash = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
+        
+        task_metadata = {
+            "image_type": "geospatial",
+            "geospatial_crs": "EPSG:3857",
+            "use_geo_metadata": True,
+            "pixel_scale_meters": 0.5,
+            "ref_latitude": min_lat,
+            "ref_longitude": min_lon
+        }
+        
+        created = memory.create_task(task_id, out_path, task_metadata, image_hash=file_hash)
+        if created:
+            memory.update_task_status(task_id, "PENDING")
+            launch_background_processing(task_id, out_path)
+            return {"task_id": task_id, "status": "PENDING"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create task")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تركيب البلاطات وتصدير GeoTIFF: {str(e)}")

@@ -471,6 +471,84 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
     }
   };
 
+  const analyzeSelectionGeoJSON = async () => {
+    try {
+      if (!geographicBBox) throw new Error('يرجى تحديد منطقة للقص أولاً.');
+      const { minLon, maxLon, minLat, maxLat } = geographicBBox;
+      const base = API_CONFIG.baseURL || 'http://localhost:8000';
+
+      const getTileTemplate = () => {
+        switch (selectedProvider) {
+          case 'esri': return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+          case 'google': return 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}';
+          case 'gibs_truecolor': return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${selectedLayer}/default/${date}/${NASA_GIBS_TILE_MATRIX}/{z}/{y}/{x}.jpg`;
+          default: return 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        }
+      };
+
+      if (selectedProvider === 'google') {
+        if (!window.confirm('صور Google قد تكون محمية. هل تود المتابعة؟')) return;
+      }
+
+      setStatusMessage('جاري قص المنطقة وبدء التحليل عبر الوكلاء...');
+      const params = new URLSearchParams({
+        tile_template: getTileTemplate(),
+        zoom: String(tileZoom),
+        min_lon: String(minLon), min_lat: String(minLat),
+        max_lon: String(maxLon), max_lat: String(maxLat)
+      });
+      const response = await fetch(`${base}/crop/analyze_from_tiles?${params.toString()}`);
+      if (!response.ok) throw new Error('فشل بدء التحليل');
+      const data = await response.json();
+      const taskId = data.task_id;
+      
+      setStatusMessage('التحليل قيد التنفيذ، يرجى الانتظار...');
+      // Poll
+      const pollInterval = setInterval(async () => {
+        try {
+          const stRes = await fetch(`${base}/tasks/${taskId}/status`);
+          if (stRes.ok) {
+            const stData = await stRes.json();
+            if (stData.status === 'COMPLETED') {
+              clearInterval(pollInterval);
+              setStatusMessage('اكتمل التحليل، جاري تحميل GeoJSON...');
+              const repRes = await fetch(`${base}/tasks/${taskId}/report`);
+              const repData = await repRes.json();
+              
+              if (repData.geojson) {
+                const blob = new Blob([JSON.stringify(repData.geojson)], { type: 'application/geo+json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `analysis_${taskId}.geojson`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                setStatusMessage('');
+              } else {
+                 setStatusMessage('لم يتم العثور على مضلعات.');
+                 setTimeout(() => setStatusMessage(''), 3000);
+              }
+            } else if (stData.status === 'FAILED') {
+              clearInterval(pollInterval);
+              setStatusMessage('فشل التحليل الذكي.');
+              setTimeout(() => setStatusMessage(''), 3000);
+            } else {
+              setStatusMessage(`جاري التحليل... (${stData.status})`);
+            }
+          }
+        } catch (e) {
+            console.error(e);
+        }
+      }, 3000);
+
+    } catch (e: any) {
+      alert('خطأ أثناء التحليل: ' + (e?.message || e));
+      setStatusMessage('');
+    }
+  };
+
   const updateImageryLayer = () => {
     if (!viewerRef.current || !(window as any).Cesium) return;
     const imageryProvider = createImageryProvider(selectedProvider);
@@ -1024,7 +1102,13 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                           onClick={saveSelectionAsTiff}
                           className="col-span-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
                         >
-                          <Download className="w-4 h-4" /> معالجة وحفظ TIFF
+                          <Download className="w-4 h-4" /> حفظ كـصورة TIFF
+                        </button>
+                        <button
+                          onClick={analyzeSelectionGeoJSON}
+                          className="col-span-2 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
+                        >
+                          <Download className="w-4 h-4" /> تحليل ذكي (بيوت/طرق/أراضي) بصيغة GeoJSON
                         </button>
                         <button
                           onClick={cancelSelection}
