@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
 const MapViewer = dynamic(() => import('./MapViewer'), { ssr: false });
-import { LAYER_STYLES } from '@/app/lib/map-config';
+import { LAYER_STYLES, API_CONFIG } from '@/app/lib/map-config';
 
 interface AuditInterfaceProps {
   taskId?: string;
@@ -26,6 +26,97 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
     pendingFeatures: 0,
     accuracy: 0
   });
+
+  const defaultMapStyles = {
+    buildings: { color: "#ff0000", width: 3, dash: "solid", fillOpacity: 0.2 },
+    roads: { color: "#cccccc", width: 4, dash: "solid", fillOpacity: 0.0 },
+    agricultural: { color: "#228b22", width: 3, dash: "solid", fillOpacity: 0.2 },
+    water_bodies: { color: "#0000ff", width: 3, dash: "solid", fillOpacity: 0.2 },
+    arid: { color: "#8b4513", width: 3, dash: "solid", fillOpacity: 0.2 },
+    unknown: { color: "#ffff00", width: 3, dash: "solid", fillOpacity: 0.2 },
+  };
+
+  const [customStyles, setCustomStyles] = useState<any>(defaultMapStyles);
+  const [isStylePanelOpen, setIsStylePanelOpen] = useState<boolean>(false);
+  const [isUpdatingPreview, setIsUpdatingPreview] = useState<boolean>(false);
+
+  useEffect(() => {
+    const loadStyles = async () => {
+      if (typeof window === "undefined") return;
+      
+      let activeStyles = { ...defaultMapStyles };
+      const stored = window.localStorage.getItem("map_style_settings");
+      if (stored) {
+        try {
+          activeStyles = { ...activeStyles, ...JSON.parse(stored) };
+        } catch (e) {}
+      }
+      
+      if (taskId) {
+        try {
+          const resp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}/status`);
+          if (resp.ok) {
+            const data = await resp.json();
+            const meta = data.metadata || {};
+            const serverStyles = meta.styling;
+            if (serverStyles) {
+              activeStyles = { ...activeStyles, ...serverStyles };
+            }
+          }
+        } catch (e) {}
+      }
+      
+      setCustomStyles(activeStyles);
+    };
+    
+    loadStyles();
+  }, [taskId]);
+
+  const updateStyle = (key: string, field: string, value: any) => {
+    setCustomStyles((prev: any) => {
+      const updated = {
+        ...prev,
+        [key]: {
+          ...prev[key],
+          [field]: value
+        }
+      };
+      return updated;
+    });
+  };
+
+  const handleSaveAsDefault = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("map_style_settings", JSON.stringify(customStyles));
+      alert("⭐ تم حفظ هذا التنسيق كالمظهر الافتراضي لجميع المهام بنجاح!");
+    }
+  };
+
+  const handleUpdateProcessedImage = async () => {
+    if (!taskId) return;
+    setIsUpdatingPreview(true);
+    try {
+      const saveResp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}/style`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ styles: customStyles })
+      });
+      
+      if (!saveResp.ok) throw new Error("فشل حفظ إعدادات المظهر على الخادم.");
+
+      const regenResp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}/regenerate-preview`, {
+        method: "POST"
+      });
+      
+      if (!regenResp.ok) throw new Error("فشل إعادة رندرة صورة المعاينة.");
+      
+      alert("🎉 تم تحديث الصورة النهائية الملونة بنجاح مع إعدادات التنسيق الجديدة!");
+    } catch (e: any) {
+      alert(`❌ حدث خطأ: ${e.message}`);
+    } finally {
+      setIsUpdatingPreview(false);
+    }
+  };
 
   // تحميل البيانات الأولية
   useEffect(() => {
@@ -217,12 +308,137 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
         {/* الخريطة */}
         <div className="lg:col-span-2">
-          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="font-semibold text-gray-800">خريطة التدقيق التفاعلية</h3>
-            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">
-              وضع التدقيق
-            </span>
+          <div className="p-4 border-b border-gray-200 flex flex-wrap justify-between items-center gap-2 bg-slate-50">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-gray-800">خريطة التدقيق التفاعلية</h3>
+              <span className="px-3 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                وضع التدقيق
+              </span>
+            </div>
+            
+            <button
+              onClick={() => setIsStylePanelOpen(!isStylePanelOpen)}
+              className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg text-xs font-semibold hover:from-blue-700 hover:to-indigo-700 shadow transition flex items-center gap-1 focus:outline-none"
+            >
+              <span>🎨 تخصيص المظهر</span>
+              <svg className={`w-3 h-3 transform transition-transform ${isStylePanelOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
           </div>
+          
+          {isStylePanelOpen && (
+            <div className="p-4 bg-slate-100 border-b border-gray-200 space-y-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h4 className="font-semibold text-xs text-slate-800">🎨 تنسيق ألوان وسماكة خطوط المعالم</h4>
+                  <p className="text-[10px] text-slate-500 mt-0.5">التعديلات تنعكس فوراً على الخريطة. يمكنك حفظها لتعديل الصورة النهائية والـ KML.</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {Object.entries({
+                  buildings: { label: "المباني والمنشآت 🏢", key: "buildings" },
+                  roads: { label: "الطرق والممرات 🛣️", key: "roads" },
+                  agricultural: { label: "الأراضي الزراعية والجرب 🌾", key: "agricultural" },
+                  water_bodies: { label: "الأودية ومجاري السيول 🌊", key: "water_bodies" },
+                  arid: { label: "الجبال والأراضي البور ⛰️", key: "arid" },
+                  unknown: { label: "معالم أخرى 🗺️", key: "unknown" }
+                }).map(([key, item]) => {
+                  const cfg = customStyles[key] || { color: "#cccccc", width: 2, dash: "solid", fillOpacity: 0.1 };
+                  return (
+                    <div key={key} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2 text-xs">
+                      <div className="font-bold text-slate-700 border-b pb-1 mb-1">{item.label}</div>
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-slate-500">اللون:</span>
+                        <input
+                          type="color"
+                          value={cfg.color}
+                          onChange={(e) => updateStyle(key, "color", e.target.value)}
+                          className="w-8 h-6 rounded border cursor-pointer p-0"
+                        />
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between text-[10px] text-slate-500">
+                          <span>السمك:</span>
+                          <span className="font-bold">{cfg.width}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1"
+                          max="10"
+                          value={cfg.width}
+                          onChange={(e) => updateStyle(key, "width", parseInt(e.target.value))}
+                          className="w-full h-1 bg-slate-200 rounded cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between text-[10px] text-slate-500">
+                          <span>الشفافية:</span>
+                          <span className="font-bold">{Math.round(cfg.fillOpacity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={cfg.fillOpacity}
+                          onChange={(e) => updateStyle(key, "fillOpacity", parseFloat(e.target.value))}
+                          className="w-full h-1 bg-slate-200 rounded cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="flex justify-between items-center gap-1">
+                        <span className="text-[10px] text-slate-500">شكل الخط:</span>
+                        <select
+                          value={cfg.dash}
+                          onChange={(e) => updateStyle(key, "dash", e.target.value)}
+                          className="bg-slate-50 text-slate-700 px-1 py-0.5 rounded text-[10px] focus:outline-none border"
+                        >
+                          <option value="solid">مستمر ━</option>
+                          <option value="dashed">متقطع ╌</option>
+                          <option value="dotted">منقط 🞄</option>
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {taskId && (
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={handleSaveAsDefault}
+                    className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg text-xs font-semibold shadow flex items-center gap-1 focus:outline-none"
+                  >
+                    <span>⭐ حفظ المظهر كافتراضي</span>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={handleUpdateProcessedImage}
+                    disabled={isUpdatingPreview}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow disabled:opacity-50 flex items-center gap-1 focus:outline-none"
+                  >
+                    {isUpdatingPreview ? (
+                      <>
+                        <span className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white"></span>
+                        <span>جاري تحديث الخادم...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>💾 تطبيق المظهر وتحديث الصورة المعالجة</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           
           <div className="h-[500px] p-4">
             <MapViewer
@@ -233,6 +449,7 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
               editMode={true}
               center={center}
               zoom={zoom}
+              customStyles={customStyles}
             />
           </div>
 

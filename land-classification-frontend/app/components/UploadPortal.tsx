@@ -18,7 +18,7 @@ interface SamSettings {
   samStabilityScoreThresh: string;
 }
 
-type ImageType = 'regular' | 'geospatial';
+type ImageType = 'regular' | 'geospatial' | 'kml';
 
 export default function UploadPortal({ onUploadComplete, onProcessingStart }: UploadPortalProps) {
   const [isUploading, setIsUploading] = useState(false);
@@ -40,6 +40,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.86');
   const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.85');
   const [tfwContent, setTfwContent] = useState<string | null>(null);
+  const [zoom, setZoom] = useState('18');
 
   const handleTfwFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -257,7 +258,10 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   ];
 
   // أنواع الملفات المدعومة
-  const acceptedFiles = {
+  const acceptedFiles: Record<string, string[]> = imageType === 'kml' ? {
+    'application/vnd.google-earth.kml+xml': ['.kml'],
+    'application/geo+json': ['.geojson', '.json']
+  } : {
     'image/*': ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.geotiff']
   };
 
@@ -268,6 +272,53 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     setIsUploading(true);
     setUploadProgress(0);
     setError(null);
+
+    if (imageType === 'kml') {
+      const fileInfo = {
+        name: file.name,
+        size: (file.size / 1024).toFixed(2) + ' KB',
+        type: file.type || 'KML/GeoJSON',
+        lastModified: new Date(file.lastModified).toLocaleString('ar-SA'),
+        region: selectedRegion,
+        imageType,
+      };
+      setFileInfo(fileInfo);
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('zoom', zoom);
+      formData.append('tile_template', 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}');
+      formData.append('country', 'Yemen');
+      formData.append('sam_use_fallback', String(samUseFallback));
+      formData.append('sam_min_mask_region_area', String(samMinMaskRegionArea));
+      formData.append('sam_points_per_side', String(samPointsPerSide));
+      formData.append('sam_pred_iou_thresh', String(samPredIoUThresh));
+      formData.append('sam_stability_score_thresh', String(samStabilityScoreThresh));
+
+      try {
+        setUploadProgress(25);
+        const response = await fetch(`${API_CONFIG.baseURL}/tasks/analyze/kml`, {
+          method: 'POST',
+          body: formData,
+        });
+        setUploadProgress(75);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || 'فشل إرسال ملف الخريطة للتحليل');
+        }
+        const result = await response.json();
+        setUploadProgress(100);
+        setTimeout(() => setIsUploading(false), 400);
+
+        if (onUploadComplete) onUploadComplete(result);
+        if (onProcessingStart) onProcessingStart();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف');
+        setIsUploading(false);
+        setUploadProgress(0);
+      }
+      return;
+    }
 
     const fileInfo = {
       name: file.name,
@@ -312,7 +363,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       setIsUploading(false);
       setUploadProgress(0);
     }
-  }, [selectedRegion, imageType, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
+  }, [selectedRegion, imageType, zoom, pixelScale, refLatitude, refLongitude, geoCrs, useGeoMetadata, samUseFallback, samMinMaskRegionArea, samPointsPerSide, samPredIoUThresh, samStabilityScoreThresh, onUploadComplete, onProcessingStart]);
 
   const uploadRemoteUrl = useCallback(async () => {
     if (!remoteUrl.trim()) {
@@ -479,128 +530,170 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
           >
             صورة جغرافية
           </button>
+          <button
+            type="button"
+            onClick={() => { setImageType('kml'); setUploadMode('file'); }}
+            disabled={isUploading}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'kml' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+          >
+            📁 تحليل KML / GeoJSON فوري
+          </button>
         </div>
         <p className="text-sm text-slate-500">
-          اختر إذا كانت الصورة تحتوي على بيانات جغرافية مضمنة أو تحتاج إدخال بيانات الإسقاط يدوياً.
+          {imageType === 'kml' 
+            ? 'ارفع ملف KML أو GeoJSON صغير للمنطقة، وسيجلب السيرفر صور القمر الصناعي ويبدأ تحليلها فوراً!' 
+            : 'اختر إذا كانت الصورة تحتوي على بيانات جغرافية مضمنة أو تحتاج إدخال بيانات الإسقاط يدوياً.'}
         </p>
       </div>
 
       {/* إعدادات القياس والإحداثيات */}
-      <div className="mb-6 grid gap-4 lg:grid-cols-2">
-        <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-          <h3 className="font-semibold text-slate-800 mb-3">إعدادات الصورة</h3>
-          <label className="block mb-3 text-sm text-slate-700">
-            <span className="block mb-1">مقياس البكسل (متر/بكسل)</span>
-            <input
-              type="number"
-              value={pixelScale}
-              onChange={(e) => setPixelScale(e.target.value)}
-              step="0.01"
-              min="0.01"
-              disabled={isUploading}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </label>
-          <label className="block mb-3 text-sm text-slate-700">
-            <span className="block mb-1">خط العرض المرجعي</span>
-            <input
-              type="number"
-              value={refLatitude}
-              onChange={(e) => setRefLatitude(e.target.value)}
-              step="0.0001"
-              disabled={isUploading}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </label>
-          <label className="block text-sm text-slate-700">
-            <span className="block mb-1">خط الطول المرجعي</span>
-            <input
-              type="number"
-              value={refLongitude}
-              onChange={(e) => setRefLongitude(e.target.value)}
-              step="0.0001"
-              disabled={isUploading}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </label>
-        </div>
-
-        {imageType === 'geospatial' && (
+      {imageType !== 'kml' ? (
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
           <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-            <h3 className="font-semibold text-slate-800 mb-3">معلومات الصورة الجغرافية</h3>
-            <label className="flex items-center gap-3 mb-4 text-sm text-slate-700">
+            <h3 className="font-semibold text-slate-800 mb-3">إعدادات الصورة</h3>
+            <label className="block mb-3 text-sm text-slate-700">
+              <span className="block mb-1">مقياس البكسل (متر/بكسل)</span>
               <input
-                type="checkbox"
-                checked={useGeoMetadata}
-                onChange={(e) => setUseGeoMetadata(e.target.checked)}
-                disabled={isUploading}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              />
-              استخدام بيانات GeoTIFF المضمنة إذا كانت متاحة
-            </label>
-            <label className="block text-sm text-slate-700">
-              <span className="block mb-1">نظام الإحداثيات (CRS)</span>
-              <input
-                type="text"
-                value={geoCrs}
-                onChange={(e) => setGeoCrs(e.target.value)}
+                type="number"
+                value={pixelScale}
+                onChange={(e) => setPixelScale(e.target.value)}
+                step="0.01"
+                min="0.01"
                 disabled={isUploading}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </label>
-            <label className="block text-sm text-slate-700 mt-4">
-              <span className="block mb-1">ملف الإحداثيات المصاحب (TFW / World File) - اختياري</span>
+            <label className="block mb-3 text-sm text-slate-700">
+              <span className="block mb-1">خط العرض المرجعي</span>
               <input
-                type="file"
-                accept=".tfw,.jgw,.pgw,.wld"
-                onChange={handleTfwFileChange}
+                type="number"
+                value={refLatitude}
+                onChange={(e) => setRefLatitude(e.target.value)}
+                step="0.0001"
                 disabled={isUploading}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </label>
-            <p className="text-xs text-slate-500 mt-3">
-              إذا كان الملف يحتوي على بيانات جغرافية، سيحاول النظام استخدامها؛ وإلا سيعتمد على القيم اليدوية أعلاه.
-            </p>
+            <label className="block text-sm text-slate-700">
+              <span className="block mb-1">خط الطول المرجعي</span>
+              <input
+                type="number"
+                value={refLongitude}
+                onChange={(e) => setRefLongitude(e.target.value)}
+                step="0.0001"
+                disabled={isUploading}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </label>
           </div>
-        )}
-      </div>
+
+          {imageType === 'geospatial' && (
+            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <h3 className="font-semibold text-slate-800 mb-3">معلومات الصورة الجغرافية</h3>
+              <label className="flex items-center gap-3 mb-4 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={useGeoMetadata}
+                  onChange={(e) => setUseGeoMetadata(e.target.checked)}
+                  disabled={isUploading}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                استخدام بيانات GeoTIFF المضمنة إذا كانت متاحة
+              </label>
+              <label className="block text-sm text-slate-700">
+                <span className="block mb-1">نظام الإحداثيات (CRS)</span>
+                <input
+                  type="text"
+                  value={geoCrs}
+                  onChange={(e) => setGeoCrs(e.target.value)}
+                  disabled={isUploading}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </label>
+              <label className="block text-sm text-slate-700 mt-4">
+                <span className="block mb-1">ملف الإحداثيات المصاحب (TFW / World File) - اختياري</span>
+                <input
+                  type="file"
+                  accept=".tfw,.jgw,.pgw,.wld"
+                  onChange={handleTfwFileChange}
+                  disabled={isUploading}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+              </label>
+              <p className="text-xs text-slate-500 mt-3">
+                إذا كان الملف يحتوي على بيانات جغرافية، سيحاول النظام استخدامها؛ وإلا سيعتمد على القيم اليدوية أعلاه.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mb-6 grid gap-4 lg:grid-cols-1">
+          <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <h3 className="font-semibold text-slate-800 mb-3">إعدادات خريطة القمر الصناعي</h3>
+            <label className="block mb-3 text-sm text-slate-700">
+              <span className="block mb-1">مستوى دقة القمر الصناعي (Zoom Level)</span>
+              <input
+                type="number"
+                value={zoom}
+                onChange={(e) => setZoom(e.target.value)}
+                min="14"
+                max="21"
+                disabled={isUploading}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-[10px] text-slate-400 block mt-1">مستوى التقريب الافتراضي هو 18 (يعطي دقة 0.5 متر لكل بكسل تقريباً).</span>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* معلومات النظام */}
       <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h3 className="font-semibold text-blue-800 mb-2">📋 مواصفات الرفع:</h3>
-        <ul className="text-sm text-blue-700 space-y-1">
-          <li>• <strong>الحجم الأقصى:</strong> 1 جيجابايت</li>
-          <li>• <strong>الصيغ المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
-          <li>• <strong>وقت المعالجة:</strong> 120 ثانية كحد أقصى (من PDF)</li>
-          <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
-          <li>• <strong>إعدادات SAM:</strong> يتم تحميلها من صفحة <Link href="/settings" className="text-blue-700 underline">الإعدادات</Link></li>
-        </ul>
+        {imageType === 'kml' ? (
+          <ul className="text-sm text-blue-700 space-y-1">
+            <li>• <strong>الحجم الأقصى:</strong> 10 ميجابايت</li>
+            <li>• <strong>الصيغ المدعومة:</strong> KML, GeoJSON, JSON</li>
+            <li>• <strong>سرعة التحليل:</strong> فائقة السرعة (بين 10-20 ثانية)</li>
+            <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
+          </ul>
+        ) : (
+          <ul className="text-sm text-blue-700 space-y-1">
+            <li>• <strong>الحجم الأقصى:</strong> 1 جيجابايت</li>
+            <li>• <strong>الصيغ المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
+            <li>• <strong>وقت المعالجة:</strong> 120 ثانية كحد أقصى (من PDF)</li>
+            <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
+            <li>• <strong>إعدادات SAM:</strong> يتم تحميلها من صفحة <Link href="/settings" className="text-blue-700 underline">الإعدادات</Link></li>
+          </ul>
+        )}
       </div>
 
-      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-        <h3 className="font-semibold text-slate-800 mb-3">وضع الرفع</h3>
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => setUploadMode('file')}
-            disabled={isUploading}
-            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'file' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
-          >
-            رفع ملف
-          </button>
-          <button
-            type="button"
-            onClick={() => setUploadMode('url')}
-            disabled={isUploading}
-            className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'url' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
-          >
-            رابط خارجي
-          </button>
+      {imageType !== 'kml' && (
+        <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+          <h3 className="font-semibold text-slate-800 mb-3">وضع الرفع</h3>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => setUploadMode('file')}
+              disabled={isUploading}
+              className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'file' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+            >
+              رفع ملف
+            </button>
+            <button
+              type="button"
+              onClick={() => setUploadMode('url')}
+              disabled={isUploading}
+              className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'url' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+            >
+              رابط خارجي
+            </button>
+          </div>
+          <p className="text-sm text-slate-500 mt-3">
+            اختر رفع الملف مباشرةً إذا كان صغيراً، أو استخدم رابط الملف إذا كان كبيراً أو موجوداً في الخدمة السحابية.
+          </p>
         </div>
-        <p className="text-sm text-slate-500 mt-3">
-          اختر رفع الملف مباشرةً إذا كان صغيراً، أو استخدم رابط الملف إذا كان كبيراً أو موجوداً في الخدمة السحابية.
-        </p>
-      </div>
+      )}
 
       {uploadMode === 'url' ? (
         <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
@@ -630,7 +723,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       ) : (
         <div className="mb-6">
           <label className="block text-gray-700 mb-2 font-medium">
-            اختر صورة جوية
+            {imageType === 'kml' ? 'اختر ملف KML أو GeoJSON للمنطقة' : 'اختر صورة جوية'}
           </label>
           <div
             {...getRootProps()}
@@ -647,7 +740,7 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 <div className="w-16 h-16 mx-auto">
                   <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
                 </div>
-                <p className="text-gray-600 font-medium">جاري رفع الملف...</p>
+                <p className="text-gray-600 font-medium">جاري رفع ومعالجة الملف...</p>
                 
                 {/* شريط التقدم */}
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
@@ -677,10 +770,10 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                   {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
                 </p>
                 <p className="text-sm text-gray-400 mt-2">
-                  يدعم: JPG, PNG, TIFF, GeoTIFF
+                  {imageType === 'kml' ? 'يدعم: KML, GeoJSON, JSON' : 'يدعم: JPG, PNG, TIFF, GeoTIFF'}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  (حتى 1 جيجابايت)
+                  {imageType === 'kml' ? '(حتى 10 ميجابايت)' : '(حتى 1 جيجابايت)'}
                 </p>
               </>
             )}

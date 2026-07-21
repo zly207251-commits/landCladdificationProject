@@ -358,7 +358,7 @@ def should_use_tiling(image_path: str, tile_size: Optional[int] = None) -> bool:
         import rasterio
         with rasterio.open(image_path) as src:
             total_pixels = src.height * src.width
-            threshold_pixels = max(tile_size * tile_size * 2, 6000000)
+            threshold_pixels = max(tile_size * tile_size * 2, 4000000)
             return total_pixels > threshold_pixels
     except Exception:
         return False

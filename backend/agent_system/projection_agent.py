@@ -79,8 +79,8 @@ class ProjectionAgent(BaseAgent):
             }
 
         # --- معالجة الصور الصغيرة العادية المتبقية ---
-        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        if image is None and rasterio is not None:
+        image = None
+        if rasterio is not None:
             try:
                 with rasterio.open(image_path) as ds:
                     bands = ds.read()
@@ -91,13 +91,31 @@ class ProjectionAgent(BaseAgent):
                             image = np.transpose(bands, (1, 2, 0))
                     else:
                         image = bands
-                    image = np.asarray(image, dtype=np.uint8)
+                    
+                    # تسوية القيم الجغرافية (16-bit أو float) لتصبح بنطاق [0, 255] لمنع السواد وفشل السطوع
+                    img_min = float(image.min())
+                    img_max = float(image.max())
+                    if img_max > img_min:
+                        image = ((image - img_min) / (img_max - img_min) * 255.0).astype(np.uint8)
+                    else:
+                        image = np.zeros_like(image, dtype=np.uint8)
+                        
                     if image.ndim == 2:
                         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
                     elif image.shape[2] == 1:
                         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
                     elif image.shape[2] == 4:
                         image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    else:
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            except Exception as e:
+                print(f"[ProjectionAgent] Error loading image with rasterio: {e}")
+                image = None
+
+        if image is None:
+            try:
+                image = cv2.imread(image_path, cv2.IMREAD_COLOR)
             except Exception:
                 image = None
 
@@ -282,28 +300,39 @@ class ProjectionAgent(BaseAgent):
                         scale = max_dim / max(orig_width, orig_height)
                         out_width = int(orig_width * scale)
                         out_height = int(orig_height * scale)
+                    else:
+                        out_width = orig_width
+                        out_height = orig_height
                         
-                        from rasterio.enums import Resampling
-                        bands = ds.read(
-                            out_shape=(min(3, ds.count), out_height, out_width),
-                            resampling=Resampling.bilinear
-                        )
-                        if bands.ndim == 3:
-                            if bands.shape[0] >= 3:
-                                img_preview = np.stack([bands[0], bands[1], bands[2]], axis=-1)
-                            else:
-                                img_preview = np.transpose(bands, (1, 2, 0))
+                    from rasterio.enums import Resampling
+                    bands = ds.read(
+                        out_shape=(min(3, ds.count), out_height, out_width),
+                        resampling=Resampling.bilinear
+                    )
+                    if bands.ndim == 3:
+                        if bands.shape[0] >= 3:
+                            img_preview = np.stack([bands[0], bands[1], bands[2]], axis=-1)
                         else:
-                            img_preview = bands
-                        img_preview = np.asarray(img_preview, dtype=np.uint8)
-                        if img_preview.ndim == 2:
-                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
-                        elif img_preview.shape[2] == 1:
-                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
-                        elif img_preview.shape[2] == 4:
-                            img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGBA2BGR)
+                            img_preview = np.transpose(bands, (1, 2, 0))
+                    else:
+                        img_preview = bands
                         
-                        # Convert RGB to BGR for OpenCV
+                    # تسوية القيم الجغرافية (16-bit أو float) لتصبح بنطاق [0, 255] لمنع السواد
+                    img_min = float(img_preview.min())
+                    img_max = float(img_preview.max())
+                    if img_max > img_min:
+                        img_preview = ((img_preview - img_min) / (img_max - img_min) * 255.0).astype(np.uint8)
+                    else:
+                        img_preview = np.zeros_like(img_preview, dtype=np.uint8)
+                        
+                    if img_preview.ndim == 2:
+                        img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
+                    elif img_preview.shape[2] == 1:
+                        img_preview = cv2.cvtColor(img_preview, cv2.COLOR_GRAY2BGR)
+                    elif img_preview.shape[2] == 4:
+                        img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGBA2BGR)
+                        img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGB2BGR)
+                    else:
                         img_preview = cv2.cvtColor(img_preview, cv2.COLOR_RGB2BGR)
             except Exception as e:
                 print(f"[ProjectionAgent] Error reading preview with rasterio: {e}")
@@ -366,6 +395,14 @@ class ProjectionAgent(BaseAgent):
         # جلب تفاصيل المهمة للتحويل البديل
         task_info = memory.get_task(task_id)
         task_meta = task_info.get("metadata", {}) if task_info else {}
+        if isinstance(task_meta, str):
+            try:
+                import json
+                task_meta = json.loads(task_meta)
+            except Exception:
+                task_meta = {}
+        custom_styling = task_meta.get("styling") or {}
+
         pixel_scale = float(task_meta.get("pixel_scale_meters", 0.5))
         ref_lat = float(task_meta.get("ref_latitude", 15.3694))
         ref_lon = float(task_meta.get("ref_longitude", 44.1910))
@@ -375,7 +412,35 @@ class ProjectionAgent(BaseAgent):
 
         for layer in layers:
             label = layer.get('layer_name', 'unknown').lower()
-            color = COLOR_MAP.get(label, COLOR_MAP['unknown'])
+            
+            # Normalize layer key
+            layer_key = label
+            name_map = {
+                'مبنى': 'buildings', 'buildings': 'buildings',
+                'شارع': 'roads', 'roads': 'roads',
+                'وادي': 'water_bodies', 'water_bodies': 'water_bodies', 'water': 'water_bodies',
+                'مزرعة': 'agricultural', 'agricultural': 'agricultural', 'vegetation': 'agricultural',
+                'أرض': 'agricultural', 'جبل': 'arid', 'arid': 'arid', 'وغيرها': 'unknown'
+            }
+            normalized_key = name_map.get(layer_key, layer_key)
+            
+            # Get style config from task metadata if available
+            custom_cfg = custom_styling.get(normalized_key) or custom_styling.get(layer_key)
+            
+            # Parse color and width
+            if custom_cfg and custom_cfg.get("color"):
+                hex_color = custom_cfg.get("color").lstrip('#')
+                if len(hex_color) >= 6:
+                    r = int(hex_color[0:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    color = (b, g, r)  # BGR order for OpenCV
+                else:
+                    color = COLOR_MAP.get(normalized_key) or COLOR_MAP.get(layer_key, COLOR_MAP['unknown'])
+                width = int(custom_cfg.get("width", 3))
+            else:
+                color = COLOR_MAP.get(normalized_key) or COLOR_MAP.get(layer_key, COLOR_MAP['unknown'])
+                width = 3
             
             geo_polygons = layer.get('geo_polygons', [])
             if isinstance(geo_polygons, str):
@@ -455,8 +520,8 @@ class ProjectionAgent(BaseAgent):
                     [int(pt[0] * scale_x), int(pt[1] * scale_y)] for pt in poly
                 ], dtype=np.int32)
                 
-                # رسم الحدود الخارجية فقط بلون الطبقة وسماكة 3 بكسل دون تعبئة المساحات
-                cv2.polylines(img_preview, [scaled_poly], True, color, 3)
+                # رسم الحدود الخارجية فقط بلون الطبقة وسماكة مخصصة دون تعبئة المساحات
+                cv2.polylines(img_preview, [scaled_poly], True, color, width)
 
         try:
             processed_filename = f"{task_id}_processed.png"
@@ -474,7 +539,6 @@ class ProjectionAgent(BaseAgent):
             # استدعاء جلب البيانات المرجعية من خريطة الشارع المفتوحة تلقائياً في الخلفية
             try:
                 import sys
-                import os
                 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 if parent_dir not in sys.path:
                     sys.path.append(parent_dir)

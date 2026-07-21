@@ -39,6 +39,7 @@ interface MapViewerProps {
   useDefaultIcon?: boolean;
   center?: [number, number] | null;
   zoom?: number | null;
+  customStyles?: any;
 }
 
 export default function MapViewer({ 
@@ -49,7 +50,8 @@ export default function MapViewer({
   editMode = false,
   useDefaultIcon = true,
   center = null,
-  zoom = null
+  zoom = null,
+  customStyles
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
   const [selecting, setSelecting] = useState<boolean>(false);
@@ -285,8 +287,9 @@ export default function MapViewer({
   const getStyle = (feature: any) => {
     const layerType = feature?.properties?.layer_type || feature?.properties?.type;
     const classification = feature?.properties?.classification;
+    const layerName = (feature?.properties?.layer_name || classification || 'unknown').toLowerCase();
     
-    // البحث عن اللون المناسب
+    // البحث عن اللون المناسب الافتراضي
     let color = '#cccccc'; // لون افتراضي
     
     if (layerType && LAYER_STYLES.agents[layerType as keyof typeof LAYER_STYLES.agents]) {
@@ -295,13 +298,37 @@ export default function MapViewer({
       color = LAYER_STYLES.classifications[classification as keyof typeof LAYER_STYLES.classifications].color;
     }
     
+    // خريطة أسماء الطبقات لتوحيد المفاتيح
+    const nameMap: Record<string, string> = {
+      'مبنى': 'buildings', 'buildings': 'buildings', 'building': 'buildings', 'residential': 'buildings',
+      'شارع': 'roads', 'roads': 'roads', 'road': 'roads', 'paved': 'roads', 'dirt': 'roads',
+      'وادي': 'water_bodies', 'water_bodies': 'water_bodies', 'water': 'water_bodies', 'river': 'water_bodies',
+      'مزرعة': 'agricultural', 'agricultural': 'agricultural', 'vegetation': 'agricultural', 'jirba': 'agricultural',
+      'أرض': 'agricultural', 'جبل': 'arid', 'arid': 'arid', 'barren': 'arid', 'وغيرها': 'unknown'
+    };
+    
+    const key = nameMap[layerName] || 'unknown';
+    const cfg = customStyles?.[key];
+    
+    const strokeColor = cfg?.color || color;
+    const strokeWidth = cfg?.width !== undefined ? Number(cfg.width) : 2.5;
+    const fillOpacity = cfg?.fillOpacity !== undefined ? Number(cfg.fillOpacity) : 0.0;
+    const dashType = cfg?.dash || 'solid';
+    
+    let dashArray = '';
+    if (dashType === 'dashed') {
+      dashArray = '6, 6';
+    } else if (dashType === 'dotted') {
+      dashArray = '2, 6';
+    }
+    
     return {
-      fillColor: color,
-      weight: 2.5,
+      fillColor: strokeColor,
+      weight: strokeWidth,
       opacity: 1,
-      color: color,
-      dashArray: '',
-      fillOpacity: 0
+      color: strokeColor,
+      dashArray: dashArray,
+      fillOpacity: fillOpacity
     };
   };
 
@@ -405,7 +432,7 @@ export default function MapViewer({
 
     return (
       <GeoJSON
-        key={JSON.stringify(cleanGeojsonData)}
+        key={JSON.stringify(cleanGeojsonData) + (customStyles ? JSON.stringify(customStyles) : '')}
         data={cleanGeojsonData}
         style={getStyle}
         onEachFeature={onEachFeature}

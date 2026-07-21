@@ -1,13 +1,108 @@
 import cv2
 import numpy as np
 import os
+import threading
 
 from typing import List, Dict, Any, Optional
+
+
+def orthogonalize_polygon_geometry(coords: List[List[float]], threshold: float = 6.0) -> List[List[float]]:
+    """
+    تقوم هذه الدالة بتربيع وتعديل مضلع المبنى لجعل زواياه قائمة (90 درجة) ومتطابقة هندسياً.
+    """
+    if len(coords) < 4:
+        return coords
+        
+    pts = np.array(coords)
+    
+    # 1. حساب ناقلات الحواف والزوايا
+    angles = []
+    for i in range(len(pts) - 1):
+        dx = pts[i+1][0] - pts[i][0]
+        dy = pts[i+1][1] - pts[i][1]
+        angles.append(np.arctan2(dy, dx))
+        
+    if not angles:
+        return coords
+        
+    # 2. حساب الاتجاه المهيمن (Dominant Angle) الموزع بشكل صحيح حول مضاعفات 90 درجة
+    mod_angles = [(a + np.pi / 4) % (np.pi / 2) - np.pi / 4 for a in angles]
+    dom_angle = np.median(mod_angles)
+    
+    # 3. تدوير المضلع ليصبح محاذياً للمحاور
+    c = np.cos(-dom_angle)
+    s = np.sin(-dom_angle)
+    rot_pts = []
+    for pt in pts:
+        rx = pt[0] * c - pt[1] * s
+        ry = pt[0] * s + pt[1] * c
+        rot_pts.append([rx, ry])
+        
+    # 4. تجميع وإسقاط الإحداثيات المتقاربة (Coordinate Clustering & Snapping)
+    # تجميع قيم X المتقاربة
+    xs = [p[0] for p in rot_pts]
+    ys = [p[1] for p in rot_pts]
+    
+    x_clusters = []
+    for x in xs:
+        added = False
+        for cl in x_clusters:
+            if abs(x - np.mean(cl)) < threshold:
+                cl.append(x)
+                added = True
+                break
+        if not added:
+            x_clusters.append([x])
+            
+    x_map = {}
+    for cl in x_clusters:
+        avg_val = np.mean(cl)
+        for x in cl:
+            x_map[x] = avg_val
+            
+    # تجميع قيم Y المتقاربة
+    y_clusters = []
+    for y in ys:
+        added = False
+        for cl in y_clusters:
+            if abs(y - np.mean(cl)) < threshold:
+                cl.append(y)
+                added = True
+                break
+        if not added:
+            y_clusters.append([y])
+            
+    y_map = {}
+    for cl in y_clusters:
+        avg_val = np.mean(cl)
+        for y in cl:
+            y_map[y] = avg_val
+            
+    # تطبيق التجميع
+    snapped_rot = []
+    for p in rot_pts:
+        snapped_rot.append([x_map[p[0]], y_map[p[1]]])
+        
+    # 5. دوران عكسي لإعادة المضلع لوضعه الأصلي
+    c_back = np.cos(dom_angle)
+    s_back = np.sin(dom_angle)
+    final_pts = []
+    for pt in snapped_rot:
+        fx = pt[0] * c_back - pt[1] * s_back
+        fy = pt[0] * s_back + pt[1] * c_back
+        final_pts.append([float(fx), float(fy)])
+        
+    # التأكد من إغلاق المضلع
+    if final_pts and final_pts[0] != final_pts[-1]:
+        final_pts.append(final_pts[0])
+        
+    return final_pts
 
 
 class LandSegmenterSAM:
     def __init__(self, model_path="sam_vit_b_01ec64.pth", fail_fast=True, use_fallback=False, min_mask_region_area=500, tile_size=1024, overlap=128):
         self.use_sam = False
+        self.lock = threading.Lock()
         self.mask_generator = None
         self.semantic_segmenter = None
         self.sam = None
@@ -190,7 +285,8 @@ class LandSegmenterSAM:
     def _segment_single_tile(self, image):
         if self.use_sam and self.mask_generator:
             try:
-                masks = self.mask_generator.generate(image)
+                with self.lock:
+                    masks = self.mask_generator.generate(image)
                 print(f"🔍 SAM generated {len(masks)} masks")
                 segments: List[Dict[str, Any]] = []
                 for idx, m in enumerate(masks, start=1):
@@ -253,6 +349,18 @@ class LandSegmenterSAM:
                                 seg['label'] = self.color_classifier.classify_mask(image, seg['mask'])
                         except Exception:
                             seg['label'] = 'unknown'
+
+                        # تربيع وتسوية مضلعات المباني لتبدو هندسية دقيقة
+                        if seg['label'] in ['building', 'building_google', 'مبنى']:
+                            ortho_polys = []
+                            for poly in seg.get('polygons', []):
+                                try:
+                                    ortho_poly = orthogonalize_polygon_geometry(poly)
+                                    ortho_polys.append(ortho_poly)
+                                except Exception as e:
+                                    print(f"⚠️ فشل تربيع زوايا المبنى: {e}")
+                                    ortho_polys.append(poly)
+                            seg['polygons'] = ortho_polys
                 if self.use_fallback and len(segments) < 3:
                     fallback_segments = self._fallback_segmentation(image, min_area=150)
                     print(f"🔄 Using fallback segmentation: {len(fallback_segments)} fallback segments")
@@ -496,7 +604,15 @@ class LandSegmenterSAM:
                     lbl = self.color_classifier.classify_mask(image, mask)
             except Exception:
                 lbl = 'unknown'
-            segments.append({'label': lbl, 'mask': mask, 'polygons': [poly], 'score': 0.5})
+                
+            # تربيع مضلعات المباني في المعالجة البديلة
+            poly_to_save = poly
+            if lbl in ['building', 'building_google', 'مبنى']:
+                try:
+                    poly_to_save = orthogonalize_polygon_geometry(poly)
+                except Exception:
+                    pass
+            segments.append({'label': lbl, 'mask': mask, 'polygons': [poly_to_save], 'score': 0.5})
         return segments
 
     def _is_duplicate_segment(self, seg_a: Dict[str, Any], seg_b: Dict[str, Any]) -> bool:
@@ -615,7 +731,7 @@ class LandColorClassifier:
 
 
 class SegFormerSemanticSegmenter:
-    MODEL_NAME = "nvidia/segformer-b0-finetuned-ade-512-512"
+    MODEL_NAME = "nvidia/segformer-b2-finetuned-ade-512-512"
 
     def __init__(self):
         try:

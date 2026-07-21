@@ -487,7 +487,8 @@ def run_agent_swarm_background(task_id: str, image_path: str):
     try:
         existing_meta = existing_task.get("metadata") or {} if existing_task else {}
         merged_meta = {**existing_meta, "source": "background_worker"}
-        memory.ensure_task_record(task_id, image_path, metadata=merged_meta, status="RUNNING")
+        existing_hash = existing_task.get("image_hash") if existing_task else None
+        memory.ensure_task_record(task_id, image_path, metadata=merged_meta, status="RUNNING", image_hash=existing_hash)
         
         # Debug: Verify after status update
         verify = memory.get_task(task_id)
@@ -1014,6 +1015,66 @@ async def analyze_image_with_agents(
         "status": "PENDING"
     }
 
+class StyleConfig(BaseModel):
+    color: str
+    width: int
+    dash: str = "solid"
+    fillOpacity: float = 0.2
+
+class TaskStyleRequest(BaseModel):
+    styles: Dict[str, StyleConfig]
+
+@app.post("/tasks/{task_id}/style", summary="حفظ المظهر المخصص للمهمة في قاعدة البيانات")
+def save_task_style(task_id: str, request: TaskStyleRequest):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+    
+    meta = task.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = {}
+            
+    meta["styling"] = {k: v.dict() for k, v in request.styles.items()}
+    
+    image_path = task.get("image_path")
+    status = task.get("status")
+    image_hash = task.get("image_hash")
+    
+    success = memory.ensure_task_record(task_id, image_path, metadata=meta, status=status, image_hash=image_hash)
+    if not success:
+         raise HTTPException(status_code=500, detail="فشل حفظ إعدادات التنسيق في قاعدة البيانات.")
+         
+    return {"message": "تم حفظ إعدادات التنسيق بنجاح.", "styling": meta["styling"]}
+
+@app.post("/tasks/{task_id}/regenerate-preview", summary="إعادة رندرة الصورة الجوية المعالجة بالمظهر المخصص")
+def regenerate_task_preview(task_id: str):
+    task = memory.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
+    
+    image_path = task.get("image_path")
+    if not image_path or not os.path.exists(image_path):
+        raise HTTPException(status_code=400, detail="الملف الأصلي للصورة غير متوفر لإعادة الرسم.")
+        
+    try:
+        from agent_system.projection_agent import ProjectionAgent
+        agent = ProjectionAgent(memory, message_bus, get_segmenter())
+        agent._generate_processed_preview(image_path, task_id, memory)
+        
+        updated_task = memory.get_task(task_id)
+        processed_path = updated_task.get("processed_image_path")
+        
+        return {
+            "message": "تمت إعادة توليد صورة المعاينة بنجاح.",
+            "processed_image_path": processed_path,
+            "processed_image_url": f"/tasks/{task_id}/image/processed"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل إعادة الرسم: {str(e)}")
+
 @app.get("/tasks/{task_id}/status", summary="Get task status - الاستعلام عن حالة المهمة")
 def get_task_status(task_id: str):
     """
@@ -1359,9 +1420,30 @@ def export_task_layers(task_id: str, format: str = "geojson", background_tasks: 
         
     # 2. تصدير KML / KMZ
     elif format in ["kml", "kmz"]:
+        def hex_to_kml_color(hex_str: str, default: str = "7fcccccc") -> str:
+            if not hex_str:
+                return default
+            hex_str = hex_str.lstrip('#')
+            if len(hex_str) == 6:
+                r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
+                return f"7f{b}{g}{r}"
+            elif len(hex_str) == 8:
+                r, g, b, a = hex_str[0:2], hex_str[2:4], hex_str[4:6], hex_str[6:8]
+                return f"{a}{b}{g}{r}"
+            return default
+
         try:
             import simplekml
             kml = simplekml.Kml(name=f"Layers for {task_id}")
+            
+            # Get custom styling from task metadata
+            task_meta = task.get("metadata") or {}
+            if isinstance(task_meta, str):
+                try:
+                    task_meta = json.loads(task_meta)
+                except Exception:
+                    task_meta = {}
+            custom_styling = task_meta.get("styling") or {}
             
             styles = {
                 "buildings": {"color": "7f0000ff", "width": 2},
@@ -1376,6 +1458,17 @@ def export_task_layers(task_id: str, format: str = "geojson", background_tasks: 
                 geo_polygons = ly.get('geo_polygons') or []
                 fol = kml.newfolder(name=layer_name)
                 
+                layer_key = layer_name.lower()
+                name_map = {
+                    'مبنى': 'buildings', 'buildings': 'buildings',
+                    'شارع': 'roads', 'roads': 'roads',
+                    'وادي': 'water_bodies', 'water_bodies': 'water_bodies', 'water': 'water_bodies',
+                    'مزرعة': 'agricultural', 'agricultural': 'agricultural', 'vegetation': 'agricultural',
+                    'أرض': 'agricultural', 'جبل': 'arid', 'arid': 'arid', 'وغيرها': 'unknown'
+                }
+                normalized_key = name_map.get(layer_key, layer_key)
+                custom_cfg = custom_styling.get(normalized_key) or custom_styling.get(layer_key)
+                
                 for idx, polygon in enumerate(geo_polygons):
                     ring = polygon
                     if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
@@ -1387,14 +1480,21 @@ def export_task_layers(task_id: str, format: str = "geojson", background_tasks: 
                         pol = fol.newpolygon(name=f"{layer_name}_{idx}")
                         pol.outerboundaryis = coords
                         
-                        style_cfg = styles.get(layer_name.lower())
-                        if style_cfg:
-                            pol.style.linestyle.color = style_cfg["color"]
-                            pol.style.linestyle.width = style_cfg["width"]
-                            pol.style.polystyle.color = style_cfg["color"]
+                        if custom_cfg:
+                            c_color = hex_to_kml_color(custom_cfg.get("color"), "7fcccccc")
+                            c_width = float(custom_cfg.get("width", 2))
+                            pol.style.linestyle.color = c_color
+                            pol.style.linestyle.width = c_width
+                            pol.style.polystyle.color = c_color
                         else:
-                            pol.style.linestyle.color = "7fcccccc"
-                            pol.style.polystyle.color = "33cccccc"
+                            style_cfg = styles.get(normalized_key) or styles.get(layer_key)
+                            if style_cfg:
+                                pol.style.linestyle.color = style_cfg["color"]
+                                pol.style.linestyle.width = style_cfg["width"]
+                                pol.style.polystyle.color = style_cfg["color"]
+                            else:
+                                pol.style.linestyle.color = "7fcccccc"
+                                pol.style.polystyle.color = "33cccccc"
                         
                         # تعطيل تعبئة المضلعات تماماً ورسم الحدود الخارجية فقط لرؤية الأرض بوضوح
                         pol.style.polystyle.fill = 0
@@ -1767,6 +1867,226 @@ def crop_from_tiles(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تركيب البلاطات وتصدير GeoTIFF: {str(e)}")
+
+
+def extract_coords_from_geojson(obj, lons, lats):
+    if isinstance(obj, list):
+        if len(obj) == 2 and isinstance(obj[0], (int, float)) and isinstance(obj[1], (int, float)):
+            lons.append(float(obj[0]))
+            lats.append(float(obj[1]))
+        else:
+            for item in obj:
+                extract_coords_from_geojson(item, lons, lats)
+    elif isinstance(obj, dict):
+        for val in obj.values():
+            extract_coords_from_geojson(val, lons, lats)
+
+
+def extract_bbox_from_file(filename: str, content: bytes) -> tuple:
+    ext = os.path.splitext(filename)[1].lower()
+    lons = []
+    lats = []
+    
+    if ext == '.geojson' or ext == '.json':
+        try:
+            import json
+            data = json.loads(content.decode('utf-8', errors='ignore'))
+            extract_coords_from_geojson(data, lons, lats)
+        except Exception as e:
+            raise ValueError(f"فشل قراءة ملف GeoJSON: {str(e)}")
+    elif ext in ['.kml', '.xml']:
+        try:
+            text = content.decode('utf-8', errors='ignore')
+            import re
+            coords_text = re.findall(r'<coordinates>(.*?)</coordinates>', text, re.DOTALL)
+            for block in coords_text:
+                for pt_str in block.strip().split():
+                    parts = pt_str.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            lons.append(float(parts[0]))
+                            lats.append(float(parts[1]))
+                        except ValueError:
+                            continue
+        except Exception as e:
+            raise ValueError(f"فشل قراءة ملف KML: {str(e)}")
+    else:
+        raise ValueError("صيغة الملف غير مدعومة. يجب أن يكون .kml أو .geojson")
+        
+    if not lons or not lats:
+        raise ValueError("لم يتم العثور على أي إحداثيات صالحة في الملف المرفوع.")
+        
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+@app.post("/tasks/analyze/kml", summary="إنشاء مهمة تحليل جديدة عبر رفع ملف KML أو GeoJSON")
+async def analyze_from_kml(
+    file: UploadFile = File(...),
+    zoom: int = Form(18),
+    tile_template: str = Form("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"),
+    country: str = Form("Yemen"),
+    sam_use_fallback: bool = Form(True),
+    sam_min_mask_region_area: int = Form(150),
+    sam_points_per_side: int = Form(32),
+    sam_pred_iou_thresh: float = Form(0.60),
+    sam_stability_score_thresh: float = Form(0.50)
+):
+    """
+    يستقبل ملف KML أو GeoJSON، ويقوم بتنزيل بلاطات خرائط الأقمار الصناعية للمنطقة،
+    ودمجها كصورة GeoTIFF، ثم يبدأ التحليل التلقائي في الخلفية فوراً.
+    """
+    if rasterio is None:
+        raise HTTPException(status_code=500, detail="Rasterio غير متوفر على الخادم.")
+        
+    try:
+        content = await file.read()
+        min_lon, min_lat, max_lon, max_lat = extract_bbox_from_file(file.filename, content)
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء قراءة الملف الجغرافي: {str(e)}")
+
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    
+    # 1. تنزيل ودمج البلاطات للمنطقة المستهدفة
+    try:
+        tile_list = list(mercantile.tiles(min_lon, min_lat, max_lon, max_lat, zoom))
+        if not tile_list:
+            raise ValueError("لم يتم العثور على بلاطات تغطي المنطقة المحددة عند هذا الزوم.")
+            
+        MAX_TILES = 500
+        if len(tile_list) > MAX_TILES:
+            raise ValueError(f"المنطقة المحددة كبيرة جداً (تحتوي على {len(tile_list)} بلاطة، الحد الأقصى هو {MAX_TILES}). يرجى تقليل الزوم أو اختيار منطقة أصغر.")
+
+        xs = [t.x for t in tile_list]
+        ys = [t.y for t in tile_list]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        cols = max_x - min_x + 1
+        rows = max_y - min_y + 1
+        tile_size = 256
+
+        canvas_w = cols * tile_size
+        canvas_h = rows * tile_size
+        
+        from PIL import Image as PILImage
+        canvas = PILImage.new('RGBA', (canvas_w, canvas_h))
+
+        for tile in tile_list:
+            url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                img = PILImage.open(io.BytesIO(resp.content)).convert('RGBA')
+            except Exception:
+                img = PILImage.new('RGBA', (tile_size, tile_size), (0, 0, 0, 0))
+
+            px = (tile.x - min_x) * tile_size
+            py = (tile.y - min_y) * tile_size
+            canvas.paste(img, (px, py))
+
+        from pyproj import Transformer
+        transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+        x_min, y_min = transformer.transform(min_lon, min_lat)
+        x_max, y_max = transformer.transform(max_lon, max_lat)
+
+        b_min = mercantile.xy_bounds(min_x, max_y, zoom)
+        b_max = mercantile.xy_bounds(max_x, min_y, zoom)
+        
+        tile_left = b_min.left
+        tile_bottom = b_min.bottom
+        tile_right = b_max.right
+        tile_top = b_max.top
+
+        res_x = (tile_right - tile_left) / canvas_w
+        res_y = (tile_top - tile_bottom) / canvas_h
+
+        px_left = max(0, int(round((x_min - tile_left) / res_x)))
+        px_right = min(canvas_w, int(round((x_max - tile_left) / res_x)))
+        px_top = max(0, int(round((tile_top - y_max) / res_y)))
+        px_bottom = min(canvas_h, int(round((tile_top - y_min) / res_y)))
+
+        if px_right <= px_left:
+            px_right = px_left + 1
+        if px_bottom <= px_top:
+            px_bottom = px_top + 1
+
+        cropped_canvas = canvas.crop((px_left, px_top, px_right, px_bottom))
+        out_w, out_h = cropped_canvas.size
+
+        left = tile_left + px_left * res_x
+        top = tile_top - px_top * res_y
+        right = tile_left + px_right * res_x
+        bottom = tile_top - px_bottom * res_y
+
+        res_x_cropped = (right - left) / out_w
+        res_y_cropped = (top - bottom) / out_h
+        out_transform = rasterio.transform.from_origin(left, top, res_x_cropped, res_y_cropped)
+
+        arr = np.array(cropped_canvas)
+        if arr.ndim == 3 and arr.shape[2] >= 3:
+            rgb = arr[:, :, :3]
+        else:
+            rgb = np.stack([arr, arr, arr], axis=-1)
+
+        rgb = np.moveaxis(rgb, -1, 0)
+
+        out_name = f"task_{task_id}.tiff"
+        out_path = os.path.join(UPLOAD_DIR, out_name)
+
+        profile = {
+            'driver': 'GTiff',
+            'dtype': 'uint8',
+            'count': rgb.shape[0],
+            'height': out_h,
+            'width': out_w,
+            'transform': out_transform,
+            'crs': 'EPSG:3857',
+            'compress': 'LZW',
+            'tiled': True
+        }
+
+        with rasterio.open(out_path, 'w', **profile) as dst:
+            dst.write(rgb)
+
+    except Exception as stitch_err:
+        raise HTTPException(status_code=500, detail=f"فشل تنزيل أو تركيب بلاطات القمر الصناعي: {str(stitch_err)}")
+
+    # 2. تسجيل المهمة وبدء معالجتها بالوكلاء
+    task_metadata = {
+        "image_type": "geospatial",
+        "geospatial_crs": "EPSG:3857",
+        "use_geo_metadata": True,
+        "pixel_scale_meters": 0.5,
+        "ref_latitude": float((min_lat + max_lat) / 2),
+        "ref_longitude": float((min_lon + max_lon) / 2),
+        "sam_use_fallback": sam_use_fallback,
+        "sam_min_mask_region_area": sam_min_mask_region_area,
+        "sam_points_per_side": sam_points_per_side,
+        "sam_pred_iou_thresh": sam_pred_iou_thresh,
+        "sam_stability_score_thresh": sam_stability_score_thresh,
+        "zoom": zoom,
+        "tile_template": tile_template
+    }
+
+    created = memory.create_task(task_id, out_path, task_metadata, image_hash=None)
+    if not created:
+        raise HTTPException(status_code=500, detail="فشل إنشاء سجل المهمة في قاعدة البيانات.")
+
+    launch_background_processing(task_id, out_path)
+
+    return {
+        "message": "تم استلام الملف الجغرافي وجلب صور المنطقة وجاري معالجتها بالذكاء الاصطناعي في الخلفية.",
+        "task_id": task_id,
+        "status": "PENDING",
+        "bbox": {
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat
+        }
+    }
+
 
 @app.get("/tasks/{task_id}/logs", summary="5. جلب السجل الحقيقي للمراسلات بين الوكلاء")
 def get_task_logs(task_id: str):

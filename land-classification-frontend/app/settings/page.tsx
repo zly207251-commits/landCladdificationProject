@@ -48,6 +48,46 @@ export default function SettingsPage() {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
+  const defaultMapStyles = {
+    buildings: { color: "#ff0000", width: 3, dash: "solid", fillOpacity: 0.2 },
+    roads: { color: "#cccccc", width: 4, dash: "solid", fillOpacity: 0.0 },
+    agricultural: { color: "#228b22", width: 3, dash: "solid", fillOpacity: 0.2 },
+    water_bodies: { color: "#0000ff", width: 3, dash: "solid", fillOpacity: 0.2 },
+    arid: { color: "#8b4513", width: 3, dash: "solid", fillOpacity: 0.2 },
+    unknown: { color: "#ffff00", width: 3, dash: "solid", fillOpacity: 0.2 },
+  };
+
+  const [customStyles, setCustomStyles] = useState<any>(defaultMapStyles);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("map_style_settings");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setCustomStyles({ ...defaultMapStyles, ...parsed });
+      } catch (e) {
+        setCustomStyles(defaultMapStyles);
+      }
+    }
+  }, []);
+
+  const updateGlobalStyle = (key: string, field: string, value: any) => {
+    setCustomStyles((prev: any) => {
+      const updated = {
+        ...prev,
+        [key]: {
+          ...prev[key],
+          [field]: value
+        }
+      };
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("map_style_settings", JSON.stringify(updated));
+      }
+      return updated;
+    });
+  };
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -171,6 +211,83 @@ export default function SettingsPage() {
                   <li>رفع القيم يزيد من دقة التقسيم لكنه قد يؤدي إلى نتائج أكبر.</li>
                 </ul>
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl bg-white p-6 shadow-lg border border-slate-200 mt-6">
+            <h2 className="text-2xl font-semibold text-slate-900">🎨 المظهر وتنسيق الخرائط الافتراضي</h2>
+            <p className="mt-2 text-slate-600">حدد ألوان، سماكة، وأشكال الخطوط الافتراضية للمعالم المستخرجة (مباني، طرق، أراضي، إلخ).</p>
+            
+            <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {Object.entries({
+                buildings: { label: "المباني والمنشآت 🏢", key: "buildings" },
+                roads: { label: "الطرق والممرات 🛣️", key: "roads" },
+                agricultural: { label: "الأراضي الزراعية والجرب 🌾", key: "agricultural" },
+                water_bodies: { label: "الأودية ومجاري السيول 🌊", key: "water_bodies" },
+                arid: { label: "الجبال والأراضي البور ⛰️", key: "arid" },
+                unknown: { label: "معالم أخرى 🗺️", key: "unknown" }
+              }).map(([key, item]) => {
+                const cfg = customStyles[key] || { color: "#cccccc", width: 2, dash: "solid", fillOpacity: 0.1 };
+                return (
+                  <div key={key} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <div className="font-semibold text-slate-800 border-b pb-2 mb-2">{item.label}</div>
+                    
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">اللون الافتراضي:</span>
+                      <input
+                        type="color"
+                        value={cfg.color}
+                        onChange={(e) => updateGlobalStyle(key, "color", e.target.value)}
+                        className="w-10 h-8 rounded border cursor-pointer p-0"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-slate-600">
+                        <span>سماكة الخط:</span>
+                        <span className="font-bold">{cfg.width}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        value={cfg.width}
+                        onChange={(e) => updateGlobalStyle(key, "width", parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-slate-600">
+                        <span>شفافية التعبئة:</span>
+                        <span className="font-bold">{Math.round(cfg.fillOpacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={cfg.fillOpacity}
+                        onChange={(e) => updateGlobalStyle(key, "fillOpacity", parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">شكل الخط:</span>
+                      <select
+                        value={cfg.dash}
+                        onChange={(e) => updateGlobalStyle(key, "dash", e.target.value)}
+                        className="bg-white text-slate-700 px-2 py-1 rounded border text-sm focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="solid">خط مستمر ━</option>
+                        <option value="dashed">متقطع ╌</option>
+                        <option value="dotted">منقط 🞄</option>
+                      </select>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>

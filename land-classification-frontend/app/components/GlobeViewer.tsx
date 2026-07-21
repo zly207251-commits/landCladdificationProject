@@ -466,7 +466,6 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                   strokeWidth: 3
                 });
                 
-                // تطبيق حدود ملونة مخصصة وتظليل شفاف تماماً
                 const entities = dataSource.entities.values;
                 for (const entity of entities) {
                   if (entity.polygon) {
@@ -482,11 +481,41 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                       hexColor = classifications[layerType].color;
                     }
                     
-                    const cesiumColor = Cesium.Color.fromCssColorString(hexColor);
+                    const layerName = String(layerType).toLowerCase();
+                    const nameMap: Record<string, string> = {
+                      'مبنى': 'buildings', 'buildings': 'buildings', 'building': 'buildings', 'residential': 'buildings',
+                      'شارع': 'roads', 'roads': 'roads', 'road': 'roads', 'paved': 'roads', 'dirt': 'roads',
+                      'وادي': 'water_bodies', 'water_bodies': 'water_bodies', 'water': 'water_bodies', 'river': 'water_bodies',
+                      'مزرعة': 'agricultural', 'agricultural': 'agricultural', 'vegetation': 'agricultural', 'jirba': 'agricultural',
+                      'أرض': 'agricultural', 'جبل': 'arid', 'arid': 'arid', 'barren': 'arid', 'وغيرها': 'unknown'
+                    };
+                    const key = nameMap[layerName] || 'unknown';
                     
-                    entity.polygon.fill = new Cesium.ConstantProperty(false); // تعطيل التظليل والتعبئة كلياً
+                    let customStyles: any = null;
+                    try {
+                      const stored = window.localStorage.getItem('map_style_settings');
+                      if (stored) customStyles = JSON.parse(stored);
+                    } catch (e) {}
+                    
+                    const cfg = customStyles?.[key];
+                    const strokeColor = cfg?.color || hexColor;
+                    const strokeWidth = cfg?.width !== undefined ? Number(cfg.width) : 3.0;
+                    const fillOpacity = cfg?.fillOpacity !== undefined ? Number(cfg.fillOpacity) : 0.0;
+                    
+                    const cesiumColor = Cesium.Color.fromCssColorString(strokeColor);
+                    
+                    if (fillOpacity > 0) {
+                      entity.polygon.fill = new Cesium.ConstantProperty(true);
+                      entity.polygon.material = new Cesium.ColorMaterialProperty(
+                        Cesium.Color.fromCssColorString(strokeColor).withAlpha(fillOpacity)
+                      );
+                    } else {
+                      entity.polygon.fill = new Cesium.ConstantProperty(false);
+                    }
+                    
                     entity.polygon.outline = new Cesium.ConstantProperty(true);
                     entity.polygon.outlineColor = new Cesium.ConstantProperty(cesiumColor);
+                    entity.polygon.outlineWidth = new Cesium.ConstantProperty(strokeWidth);
                   }
                 }
                 
