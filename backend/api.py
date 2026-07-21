@@ -1061,7 +1061,7 @@ def regenerate_task_preview(task_id: str):
         
     try:
         from agent_system.projection_agent import ProjectionAgent
-        agent = ProjectionAgent(memory, message_bus, get_segmenter())
+        agent = ProjectionAgent(message_bus, get_segmenter())
         agent._generate_processed_preview(image_path, task_id, memory)
         
         updated_task = memory.get_task(task_id)
@@ -1570,6 +1570,91 @@ def export_task_layers(task_id: str, format: str = "geojson", background_tasks: 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف Shapefile: {str(e)}")
             
+    # تصدير AutoCAD DXF
+    elif format == "dxf":
+        try:
+            import ezdxf
+            from pyproj import Transformer
+
+            doc = ezdxf.new(dxfversion='AC1024')  # DXF version AutoCAD 2008
+            msp = doc.modelspace()
+
+            # Define standard layers with standard AutoCAD index colors (ACI)
+            layers_def = {
+                "مبنى": {"layer": "BUILDINGS", "color": 1},      # Red
+                "building": {"layer": "BUILDINGS", "color": 1},
+                "building_google": {"layer": "BUILDINGS", "color": 1},
+                "شارع": {"layer": "ROADS", "color": 8},          # Gray
+                "road": {"layer": "ROADS", "color": 8},
+                "مزرعة": {"layer": "AGRICULTURAL", "color": 3},   # Green
+                "agricultural": {"layer": "AGRICULTURAL", "color": 3},
+                "وادي": {"layer": "WATER_BODIES", "color": 5},    # Blue
+                "water_body": {"layer": "WATER_BODIES", "color": 5},
+                "أرض": {"layer": "LAND_ZONES", "color": 2},       # Yellow
+                "land": {"layer": "LAND_ZONES", "color": 2},
+                "جبل": {"layer": "MOUNTAINS", "color": 40},       # Brown/Orange
+                "mountain": {"layer": "MOUNTAINS", "color": 40},
+            }
+
+            # Pre-create all layers in DXF
+            dxf_layer_names = set()
+            for l_info in layers_def.values():
+                dxf_name = l_info["layer"]
+                if dxf_name not in dxf_layer_names:
+                    doc.layers.new(name=dxf_name, dxfattribs={'color': l_info["color"]})
+                    dxf_layer_names.add(dxf_name)
+
+            # Default layer for others
+            default_layer_name = "OTHERS"
+            doc.layers.new(name=default_layer_name, dxfattribs={'color': 7}) # White/Black
+
+            # Initialize Projection Transformer to convert degrees to Web Mercator meters (EPSG:3857)
+            transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+
+            features_count = 0
+            for ly in layers:
+                layer_name = ly.get('layer_name', 'unknown')
+                normalized_key = layer_name.strip().lower()
+                
+                layer_cfg = layers_def.get(normalized_key) or layers_def.get(layer_name)
+                if layer_cfg:
+                    target_layer = layer_cfg["layer"]
+                else:
+                    target_layer = default_layer_name
+
+                geo_polygons = ly.get('geo_polygons') or []
+                for polygon in geo_polygons:
+                    ring = polygon
+                    if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
+                        ring = polygon[0]
+
+                    points_meters = []
+                    for pt in ring:
+                        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                            x, y = transformer.transform(float(pt[0]), float(pt[1]))
+                            points_meters.append((x, y))
+
+                    if len(points_meters) >= 3:
+                        if points_meters[0] == points_meters[-1]:
+                            points_meters = points_meters[:-1]
+                        
+                        msp.add_lwpolyline(points_meters, dxfattribs={'layer': target_layer, 'closed': True})
+                        features_count += 1
+
+            if features_count == 0:
+                raise ValueError("لا توجد معالم مساحية صالحة لتصديرها بصيغة DXF")
+
+            fd, path = tempfile.mkstemp(suffix=".dxf")
+            os.close(fd)
+            
+            doc.saveas(path)
+            
+            if background_tasks:
+                background_tasks.add_task(remove_file, path)
+            return FileResponse(path, media_type="image/vnd.dxf", filename=f"export_{task_id}.dxf")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"فشل إنشاء ملف AutoCAD DXF: {str(e)}")
+
     # 4. تصدير CSV (إحداثيات المضلعات)
     elif format == "csv":
         import csv
