@@ -68,7 +68,7 @@ export default function Home() {
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
 
       {/* Main Dashboard Grid */}
-      <div className="max-w-7xl mx-auto relative z-10 space-y-8">
+      <div className="w-full max-w-[95%] 2xl:max-w-[1600px] mx-auto relative z-10 space-y-8">
         
         {/* Welcome HUD Header */}
         <section className="border-b border-slate-800 pb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -102,27 +102,27 @@ export default function Home() {
 
         {/* Giant Glowing Action Launchpad */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Link href="/survey" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+          <Link href="/survey" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
             <div>
-              <span className="text-3xl">🛰️</span>
+              <span className="text-5xl block mb-2">🛰️</span>
               <h3 className="text-white font-bold text-sm mt-3">منصة استيراد وتحليل جديد</h3>
               <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">ارفع الصور الجوية أو ملفات الـ KML وشغّل شبكة وكلاء المعالجة لاستخراج المخططات وتثمين التربة فوراً.</p>
             </div>
             <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">LAUNCH HUB →</span>
           </Link>
 
-          <Link href="/history" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+          <Link href="/history" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
             <div>
-              <span className="text-3xl">📜</span>
+              <span className="text-5xl block mb-2">📜</span>
               <h3 className="text-white font-bold text-sm mt-3">أرشيف السجلات والمطابقة</h3>
               <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">استعرض مخططات الأراضي المكتملة سابقاً، وقارن مساحات الأوقاف، وتتبع التدقيق وحمل الملفات الهندسية.</p>
             </div>
             <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">OPEN REGISTRY →</span>
           </Link>
 
-          <Link href="/cesium" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+          <Link href="/cesium" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
             <div>
-              <span className="text-3xl">🌐</span>
+              <span className="text-5xl block mb-2">🌐</span>
               <h3 className="text-white font-bold text-sm mt-3">الـ WebGlobe والقص المباشر</h3>
               <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">تصفح خريطة الأرض التفاعلية، ارسم وحدد مناطقك مساحياً ونزلها فوراً بصيغة AutoCAD DXF أو KML.</p>
             </div>

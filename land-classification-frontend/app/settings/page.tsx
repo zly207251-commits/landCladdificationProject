@@ -92,7 +92,7 @@ export default function SettingsPage() {
     <main className="min-h-screen bg-[#212830] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#2b343f] via-[#212830] to-[#12171c] p-4 md:p-8 relative">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
 
-      <div className="max-w-7xl mx-auto grid gap-6 lg:grid-cols-[280px_1fr] relative z-10">
+      <div className="w-full max-w-[95%] 2xl:max-w-[1600px] mx-auto grid gap-6 lg:grid-cols-[280px_1fr] relative z-10">
         
         {/* القائمة الجانبية */}
         <aside className="engineering-glass p-6 rounded-3xl border border-slate-800 shadow-xl flex flex-col justify-between h-fit gap-6">

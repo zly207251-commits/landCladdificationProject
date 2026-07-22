@@ -80,7 +80,7 @@ export default function SurveyPage() {
     <div className="min-h-screen bg-[#212830] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#2b343f] via-[#212830] to-[#12171c] p-4 md:p-8 relative">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
 
-      <div className="max-w-4xl mx-auto relative z-10 space-y-6">
+      <div className="w-full max-w-[95%] xl:max-w-[85%] 2xl:max-w-[1400px] mx-auto relative z-10 space-y-6">
         {/* Title HUD Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div>
