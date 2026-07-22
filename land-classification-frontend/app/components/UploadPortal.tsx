@@ -199,6 +199,20 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     // finalize
     const completeForm = new FormData();
     completeForm.append('upload_id', uploadId);
+    completeForm.append('image_type', metadata.image_type);
+    completeForm.append('geospatial_crs', metadata.geospatial_crs);
+    completeForm.append('use_geo_metadata', String(metadata.use_geo_metadata));
+    completeForm.append('pixel_scale_meters', String(metadata.pixel_scale_meters));
+    completeForm.append('ref_latitude', String(metadata.ref_latitude));
+    completeForm.append('ref_longitude', String(metadata.ref_longitude));
+    completeForm.append('sam_use_fallback', String(metadata.sam_use_fallback));
+    completeForm.append('sam_min_mask_region_area', String(metadata.sam_min_mask_region_area));
+    completeForm.append('sam_points_per_side', String(metadata.sam_points_per_side));
+    completeForm.append('sam_pred_iou_thresh', String(metadata.sam_pred_iou_thresh));
+    completeForm.append('sam_stability_score_thresh', String(metadata.sam_stability_score_thresh));
+    if (metadata.tfw_content) {
+      completeForm.append('tfw_content', metadata.tfw_content);
+    }
     const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
       method: 'POST',
       body: completeForm

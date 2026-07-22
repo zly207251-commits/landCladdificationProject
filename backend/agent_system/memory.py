@@ -206,6 +206,22 @@ class SharedMemory:
             traceback.print_exc()
             return False
 
+    def delete_task(self, task_id: str) -> bool:
+        """مسح مهمة وكل ملحقاتها المرتبطة من قاعدة البيانات."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(self._qp("DELETE FROM tasks WHERE task_id = %s"), (task_id,))
+                conn.execute(self._qp("DELETE FROM task_tiles WHERE task_id = %s"), (task_id,))
+                conn.execute(self._qp("DELETE FROM agent_messages WHERE task_id = %s"), (task_id,))
+                conn.execute(self._qp("DELETE FROM spatial_features WHERE task_id = %s"), (task_id,))
+                conn.commit()
+                print(f"[SharedMemory] delete_task: deleted task {task_id}")
+            return True
+        except Exception as e:
+            print(f"[SharedMemory] delete_task ERROR for {task_id}: {e}")
+            traceback.print_exc()
+            return False
+
     def update_task_status(self, task_id: str, status: str) -> bool:
         """تحديث حالة المهمة الحالية."""
         now = datetime.now().isoformat()
