@@ -8,6 +8,7 @@ import { API_CONFIG } from "@/app/lib/map-config";
 export default function HudNavigation() {
   const pathname = usePathname();
   const [serverOnline, setServerOnline] = useState<boolean>(true);
+  const [isLightMode, setIsLightMode] = useState<boolean>(false);
 
   // التحقق من حالة الخادم دورياً
   useEffect(() => {
@@ -27,10 +28,9 @@ export default function HudNavigation() {
 
   // استعادة السمة وحجم الخط والسماكة المحفوظة عند تحميل أي صفحة
   useEffect(() => {
-    const savedTheme = localStorage.getItem("app_theme");
-    if (savedTheme) {
-      document.documentElement.setAttribute("data-theme", savedTheme);
-    }
+    const savedTheme = localStorage.getItem("app_theme") || "autocad";
+    document.documentElement.setAttribute("data-theme", savedTheme);
+    setIsLightMode(savedTheme === "parchment");
 
     const savedFontSize = localStorage.getItem("app_font_size");
     if (savedFontSize) {
@@ -57,6 +57,13 @@ export default function HudNavigation() {
       return pathname === link.href;
     }
     return pathname.startsWith(link.href);
+  };
+
+  const toggleTheme = () => {
+    const newTheme = isLightMode ? "autocad" : "parchment";
+    document.documentElement.setAttribute("data-theme", newTheme);
+    localStorage.setItem("app_theme", newTheme);
+    setIsLightMode(!isLightMode);
   };
 
   return (
@@ -99,8 +106,15 @@ export default function HudNavigation() {
         })}
       </nav>
 
-      {/* Status Indicators */}
+      {/* Status Indicators and Theme Toggle */}
       <div className="flex items-center gap-3 text-xs font-mono-tech font-bold shrink-0">
+        <button 
+          onClick={toggleTheme}
+          className="p-2 rounded-full bg-slate-950/50 border border-slate-700/50 hover:bg-slate-800 transition-colors"
+          title={isLightMode ? "الوضع الداكن" : "الوضع الفاتح"}
+        >
+          {isLightMode ? "🌙" : "☀️"}
+        </button>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950 border border-slate-800">
           <span className={`w-2 h-2 rounded-full ${serverOnline ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`}></span>
           <span className="text-slate-300">{serverOnline ? "Online" : "Offline"}</span>
