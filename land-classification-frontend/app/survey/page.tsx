@@ -77,7 +77,7 @@ export default function SurveyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#121214] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-zinc-900 via-[#121214] to-black p-4 md:p-8 relative">
+    <div className="min-h-screen bg-[#212830] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#2b343f] via-[#212830] to-[#12171c] p-4 md:p-8 relative">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
 
       <div className="max-w-4xl mx-auto relative z-10 space-y-6">

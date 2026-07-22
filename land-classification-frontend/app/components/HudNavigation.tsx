@@ -42,7 +42,7 @@ export default function HudNavigation() {
   };
 
   return (
-    <header className="w-full bg-[#121214]/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
+    <header className="w-full bg-[#212830]/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
       {/* Brand logo */}
       <div className="flex items-center gap-2">
         <span className="text-2xl">🌍</span>
