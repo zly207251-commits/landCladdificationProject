@@ -6,9 +6,9 @@
 
 :root {
   --background: #212830; /* نمط أوتوكاد الكلاسيكي المانع لإجهاد العين */
-  --foreground: #e2e8f0; /* نص فضي ناعم */
-  --card-bg: rgba(43, 52, 63, 0.8); /* كروت بلون رمادي مزرق خافت zinc/slate */
-  --border-color: rgba(67, 81, 99, 0.35); /* حدود ناعمة متناسقة */
+  --foreground: #ffffff; /* نص أبيض ساطع وواضح */
+  --card-bg: rgba(43, 52, 63, 0.85); /* كروت بلون رمادي مزرق خافت zinc/slate */
+  --border-color: rgba(67, 81, 99, 0.45); /* حدود ناعمة متناسقة */
   --primary-glow-rgb: 16, 185, 129; /* لون الزمرد الأخضر الهادئ */
   --secondary-glow-rgb: 217, 119, 6; /* لون برونزي دافئ */
 }
@@ -17,7 +17,15 @@ body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+  font-weight: 500; /* جعل الخط الأساسي بارزاً وواضحاً بشكل افتراضي */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700 !important; /* إبراز جميع العناوين وسماكتها */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); /* إضافة ظل خفيف خلف النصوص لزيادة وضوحها */
 }
 
 /* Custom scrollbars for engineering tables */
