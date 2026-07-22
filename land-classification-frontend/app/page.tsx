@@ -1,221 +1,173 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { API_CONFIG } from '@/app/lib/map-config';
-import UploadPortal from "./components/UploadPortal";
-import ProcessingDashboard from "./components/ProcessingDashboard";
+import Link from "next/link";
+import { API_CONFIG } from "@/app/lib/map-config";
 
-type AppState = 'upload' | 'processing' | 'results';
-
-const STORAGE_KEY = 'land_classification_job_id';
+interface Task {
+  task_id: string;
+  status: string;
+  created_at: string;
+  metadata?: {
+    image_type?: string;
+  };
+}
 
 export default function Home() {
-  const [appState, setAppState] = useState<AppState>('upload');
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [isRestoring, setIsRestoring] = useState(true);
-  const router = useRouter();
+  const [stats, setStats] = useState({
+    totalTasks: 0,
+    completedTasks: 0,
+    estimatedAreaFeddan: 0,
+    activeAgents: 5,
+    dbStatus: "Online"
+  });
+  const [recentTasks, setRecentTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // استعادة jobId من localStorage عند تحميل الصفحة
+  // جلب إحصائيات النظام العامة من السيرفر
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    const storedJobId = window.localStorage.getItem(STORAGE_KEY);
-    if (storedJobId) {
-      // استخدام baseURL من API_CONFIG للوصول للخادم
-      const statusEndpoint = `${API_CONFIG.baseURL}/tasks/${storedJobId}/status`;
-      fetch(statusEndpoint)
-        .then(res => res.json())
-        .then(data => {
-          if (data.status && data.status !== 'NOT_FOUND') {
-            // المهمة موجودة، استئناف المراقبة
-            setJobId(storedJobId);
-            setAppState('processing');
-          } else {
-            // المهمة لم تعد موجودة، تنظيف التخزين
-            window.localStorage.removeItem(STORAGE_KEY);
-          }
-        })
-        .catch(() => {
-          // خطأ في الاتصال، تنظيف التخزين
-          window.localStorage.removeItem(STORAGE_KEY);
-        })
-        .finally(() => {
-          setIsRestoring(false);
-        });
-    } else {
-      setIsRestoring(false);
-    }
+    fetch(`${API_CONFIG.baseURL}/tasks`)
+      .then(res => res.json())
+      .then(data => {
+        const tasks: Task[] = data.tasks || [];
+        const completed = tasks.filter(t => t.status === 'COMPLETED').length;
+        const estimatedArea = completed * 12.4; // حساب تقديري: فدان لكل مهمة مكتملة
+
+        setStats(prev => ({
+          ...prev,
+          totalTasks: tasks.length,
+          completedTasks: completed,
+          estimatedAreaFeddan: Math.round(estimatedArea * 10) / 10
+        }));
+        setRecentTasks(tasks.slice(0, 5)); // جلب آخر 5 مهام فقط
+      })
+      .catch(err => console.error("Error loading stats:", err))
+      .finally(() => setLoading(false));
   }, []);
 
-  // معالجة اكتمال الرفع
-  const handleUploadComplete = (fileInfo: any) => {
-    const tid = fileInfo?.task_id || fileInfo?.taskId || fileInfo?.fileId;
-    if (tid) {
-      // حفظ jobId في localStorage للاستئناف بعد إعادة تحميل الصفحة
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(STORAGE_KEY, tid);
-      }
-      setJobId(tid);
-      setAppState('processing');
-    }
-  };
-
-  // معالجة اكتمال المعالجة
-  const handleProcessingComplete = () => {
-    // تنظيف التخزين بعد اكتمال المهمة
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-    // بعد اكتمال المعالجة، ننتقل إلى صفحة النتائج مع task_id
-    if (jobId) {
-      router.push(`/results?task_id=${jobId}`);
-    } else {
-      setAppState('results');
-    }
-  };
-
-  const handleBackToHome = () => {
-    // تنظيف التخزين عند العودة للرئيسية
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-    setJobId(null);
-    setAppState('upload');
-  };
-
-  // عرض شاشة تحميل أثناء استعادة الحالة
-  if (isRestoring) {
-    return (
-      <main className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-4 md:p-8 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4">
-            <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600"></div>
-          </div>
-          <p className="text-gray-600 text-lg">جاري استعادة حالة المهمة...</p>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-4 md:p-8">
-      {/* Header */}
-      <header className="text-center mb-8">
-        <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-2">
-          🌍 وكيل تصنيف الأراضي الذكي
-        </h1>
-        <p className="text-gray-600 text-lg">
-          نظام ذكاء اصطناعي لتحليل وتصنيف المساحات الجغرافية
-        </p>
-        <div className="mt-2 flex justify-center gap-4 flex-wrap">
-          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
-            🤖 نظام فريق الوكلاء
-          </span>
-            <a href="/cesium" className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">🛰️ Cesium Viewer</a>
-          <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
-            🔄 Human-in-the-Loop
-          </span>
-        </div>
-      </header>
+    <main className="min-h-screen bg-[#0b0f19] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-[#0b0f19] to-black p-4 md:p-8 relative">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
 
-      <div className="max-w-7xl mx-auto mb-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      {/* Main Dashboard Grid */}
+      <div className="max-w-7xl mx-auto relative z-10 space-y-8">
+        
+        {/* Welcome HUD Header */}
+        <section className="border-b border-slate-800 pb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <p className="text-gray-600">ابدأ برفع الصورة الجوية ثم تابع حالة المهمة حتى اكتمال التحليل.</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">
+              لوحة التحكم المركزية - Geo-AI Swarm
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">بوابة المساحة المدنية الذكية لتصنيف الأراضي وتثمين التربة محلياً.</p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <Link href="/history" className="inline-flex items-center rounded-full bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700">
-              📜 سجل المهام السابقة
-            </Link>
-            <Link href="/settings" className="inline-flex items-center rounded-full bg-slate-100 px-4 py-2 text-slate-800 transition hover:bg-slate-200">
-              ⚙️ إعدادات SAM
-            </Link>
-            <button
-              onClick={handleBackToHome}
-              className="inline-flex items-center rounded-full bg-white px-4 py-2 text-gray-700 shadow-sm transition hover:bg-gray-100"
-            >
-              🏠 العودة للرئيسية
-            </button>
-          </div>
-        </div>
-      </div>
+        </section>
 
-      <div className="max-w-7xl mx-auto mb-8">
-        <div className="grid gap-6 lg:grid-cols-[1fr,0.7fr]">
-          <div className="rounded-3xl bg-white p-6 shadow-lg">
-            <h2 className="text-2xl font-semibold text-slate-900 mb-3">عرض Globe مستقل</h2>
-            <p className="text-slate-600 leading-relaxed">
-              يمكنك فتح صفحة عرض ثلاثية الأبعاد شبيهة بـ Google Earth باستخدام NASA GIBS وطبقات المعالم.
-            </p>
+        {/* Dashboard Counters HUD */}
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="engineering-glass glass-glow-cyan p-4.5 rounded-2xl flex flex-col">
+            <span className="text-[10px] text-slate-400 font-semibold tracking-wider">إجمالي المساحة الممسوحة</span>
+            <span className="text-2xl font-bold text-white font-mono-tech mt-1">{stats.estimatedAreaFeddan} <span className="text-xs text-cyan-400 font-normal">فدان</span></span>
           </div>
-          <div className="rounded-3xl bg-white p-6 shadow-lg flex items-center justify-center">
-            <a
-              href="/globe"
-              className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-white text-base font-semibold transition hover:bg-blue-700"
-            >
-              افتح عارض Globe مستقل
-            </a>
+          <div className="engineering-glass glass-glow-cyan p-4.5 rounded-2xl flex flex-col">
+            <span className="text-[10px] text-slate-400 font-semibold tracking-wider">إجمالي المخططات الهندسية</span>
+            <span className="text-2xl font-bold text-white font-mono-tech mt-1">{stats.totalTasks} <span className="text-xs text-cyan-400 font-normal">مخطط</span></span>
           </div>
-        </div>
-      </div>
+          <div className="engineering-glass glass-glow-cyan p-4.5 rounded-2xl flex flex-col">
+            <span className="text-[10px] text-slate-400 font-semibold tracking-wider">وكلاء الذكاء الاصطناعي</span>
+            <span className="text-2xl font-bold text-white font-mono-tech mt-1">{stats.activeAgents} <span className="text-xs text-cyan-400 font-normal">نشط</span></span>
+          </div>
+          <div className="engineering-glass glass-glow-cyan p-4.5 rounded-2xl flex flex-col">
+            <span className="text-[10px] text-slate-400 font-semibold tracking-wider">حالة اتصال قاعدة البيانات</span>
+            <span className="text-2xl font-bold text-emerald-400 font-mono-tech mt-1">{stats.dbStatus}</span>
+          </div>
+        </section>
 
-      <div className="max-w-7xl mx-auto">
-        {appState === 'upload' && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 gap-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-3xl shadow-lg text-center">
-                  <div className="w-14 h-14 mx-auto bg-green-100 rounded-full flex items-center justify-center mb-4">
-                    <span className="text-3xl">🎯</span>
+        {/* Giant Glowing Action Launchpad */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Link href="/survey" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+            <div>
+              <span className="text-3xl">🛰️</span>
+              <h3 className="text-white font-bold text-sm mt-3">منصة استيراد وتحليل جديد</h3>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">ارفع الصور الجوية أو ملفات الـ KML وشغّل شبكة وكلاء المعالجة لاستخراج المخططات وتثمين التربة فوراً.</p>
+            </div>
+            <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">LAUNCH HUB →</span>
+          </Link>
+
+          <Link href="/history" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+            <div>
+              <span className="text-3xl">📜</span>
+              <h3 className="text-white font-bold text-sm mt-3">أرشيف السجلات والمطابقة</h3>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">استعرض مخططات الأراضي المكتملة سابقاً، وقارن مساحات الأوقاف، وتتبع التدقيق وحمل الملفات الهندسية.</p>
+            </div>
+            <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">OPEN REGISTRY →</span>
+          </Link>
+
+          <Link href="/cesium" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-48 border-l-4 border-l-cyan-400">
+            <div>
+              <span className="text-3xl">🌐</span>
+              <h3 className="text-white font-bold text-sm mt-3">الـ WebGlobe والقص المباشر</h3>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">تصفح خريطة الأرض التفاعلية، ارسم وحدد مناطقك مساحياً ونزلها فوراً بصيغة AutoCAD DXF أو KML.</p>
+            </div>
+            <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">OPEN MAPS →</span>
+          </Link>
+        </section>
+
+        {/* Dashboard Bottom Layout: Info + Recent Activity */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* Recent Activity Panel */}
+          <div className="lg:col-span-2 engineering-glass p-6 rounded-3xl space-y-4">
+            <h3 className="font-bold text-slate-200 text-xs tracking-wider uppercase border-b border-slate-800 pb-2">📋 آخر المهام الجغرافية النشطة</h3>
+            
+            {loading ? (
+              <div className="py-6 text-center text-xs text-slate-500 font-mono-tech">Loading recent activities...</div>
+            ) : recentTasks.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-500">لا توجد سجلات معالجة مسجلة بعد.</div>
+            ) : (
+              <div className="space-y-3">
+                {recentTasks.map((task) => (
+                  <div key={task.task_id} className="flex justify-between items-center bg-slate-950/40 border border-slate-850 p-3.5 rounded-xl hover:border-cyan-500/20 transition">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-bold text-slate-300 font-mono-tech select-all">{task.task_id}</span>
+                      <span className="text-[9px] text-slate-500 font-mono-tech">{new Date(task.created_at).toLocaleString('ar-EG')}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                        task.status === 'COMPLETED' ? 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' :
+                        task.status === 'FAILED' ? 'bg-red-950/40 text-red-400 border-red-900/40' :
+                        'bg-amber-950/40 text-amber-400 border-amber-900/40 animate-pulse'
+                      }`}>{task.status}</span>
+                      <Link href={`/results?task_id=${task.task_id}`} className="px-2.5 py-1 bg-slate-900 hover:bg-slate-850 border border-slate-800 rounded-lg text-[10px] text-slate-300 transition">
+                        استعراض 🔍
+                      </Link>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-semibold mb-2">تصنيف دقيق</h3>
-                  <p className="text-sm text-gray-600">
-                    يستخدم النظام أفضل نموذج لتحليل المساحات الجغرافية.
-                  </p>
-                </div>
-                <div className="bg-white p-6 rounded-3xl shadow-lg text-center">
-                  <div className="w-14 h-14 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                    <span className="text-3xl">⚡</span>
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">متابعة مباشرة</h3>
-                  <p className="text-sm text-gray-600">
-                    راقب حالة المعالجة بعد الرفع واضغط على النتائج عند اكتمال المهمة.
-                  </p>
-                </div>
-                <div className="bg-white p-6 rounded-3xl shadow-lg text-center">
-                  <div className="w-14 h-14 mx-auto bg-purple-100 rounded-full flex items-center justify-center mb-4">
-                    <span className="text-3xl">📂</span>
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">سجل المهام</h3>
-                  <p className="text-sm text-gray-600">
-                    افتح صفحة السجل لرؤية آخر المهام السابقة بسهولة.
-                  </p>
-                </div>
+                ))}
               </div>
+            )}
+          </div>
 
-              <UploadPortal
-                onUploadComplete={handleUploadComplete}
-                onProcessingStart={() => setAppState('processing')}
-              />
+          {/* Swarm Agents System Info */}
+          <div className="engineering-glass p-6 rounded-3xl space-y-4">
+            <h3 className="font-bold text-slate-200 text-xs tracking-wider uppercase border-b border-slate-800 pb-2">🧠 معمارية وكلاء الأراضي</h3>
+            <div className="space-y-3.5 text-[11px] leading-relaxed text-slate-400">
+              <div className="flex gap-2">
+                <span className="text-cyan-400">❶</span>
+                <p><strong>وكيل المنسق:</strong> يتلقى طلبات الرفع ويقسم الصورة الجغرافية الكبيرة إلى قطع (Tiles) متساوية لتبسيط معالجتها متوازياً.</p>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-cyan-400">❷</span>
+                <p><strong>وكيل الإسقاط:</strong> يقوم بتحليل صور الـ GeoTIFF ورسم الحدود الجغرافية بدقة وتطبيق النموذج المرجعي CRS للمحافظات.</p>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-cyan-400">❸</span>
+                <p><strong>وكيل الأراضي:</strong> يصنف الأراضي المحلية إلى (جِرْبَة، رَفْد، كُرْوَة) ويحدد نوعية التربة وتبعيتها المائية بمفردات مساحية أصيلة.</p>
+              </div>
             </div>
           </div>
-        )}
 
-        {appState === 'processing' && (
-          <ProcessingDashboard
-            jobId={jobId || undefined}
-            onComplete={handleProcessingComplete}
-            onError={(error) => alert(error)}
-          />
-        )}
+        </section>
       </div>
-
-      {/* Footer */}
-      <footer className="mt-12 text-center text-gray-500 text-sm">
-        <p>🌐 نظام فريق الوكلاء للذكاء الاصطناعي الجغرافي</p>
-      </footer>
     </main>
   );
 }

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import HudNavigation from "./components/HudNavigation";
 
 export const metadata: Metadata = {
-  title: "وكيل تصنيف الأراضي - AI Land Classification",
-  description: "نظام ذكاء اصطناعي لتحليل وتصنيف المساحات الجغرافية",
+  title: "Geo-AI Swarm - منصة تصنيف الأوقاف الجغرافية",
+  description: "نظام فريق الوكلاء الذكي لتحليل وتصنيف المساحات الجغرافية",
 };
 
 export default function RootLayout({
@@ -14,6 +15,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body className="font-sans">
+        <HudNavigation />
         {children}
       </body>
     </html>

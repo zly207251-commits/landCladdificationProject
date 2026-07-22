@@ -519,41 +519,41 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   });
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl p-8">
-      <h2 className="text-2xl font-semibold mb-6 text-gray-800">
-        بوابة رفع الصور الجوية
+    <div className="engineering-glass glass-glow-cyan p-8 rounded-3xl relative">
+      <h2 className="text-xl font-bold mb-6 text-white flex items-center gap-2">
+        <span>📥</span> بوابة استيراد وتوجيه البيانات الجغرافية
       </h2>
 
       {/* اختيار نوع الصورة */}
-      <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-        <p className="font-semibold text-slate-800 mb-3">نوع الصورة</p>
+      <div className="mb-6 p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+        <p className="font-semibold text-slate-200 mb-3 text-sm">نوع الصورة والمخطط الجغرافي</p>
         <div className="flex flex-wrap gap-3 mb-3">
           <button
             type="button"
             onClick={() => setImageType('regular')}
             disabled={isUploading}
-            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'regular' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+            className={`px-4 py-2 rounded-xl border text-xs font-semibold transition ${imageType === 'regular' ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-cyan-500/50 hover:text-white'}`}
           >
-            صورة عادية
+            صورة عادية (أبعاد مترية)
           </button>
           <button
             type="button"
             onClick={() => setImageType('geospatial')}
             disabled={isUploading}
-            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'geospatial' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+            className={`px-4 py-2 rounded-xl border text-xs font-semibold transition ${imageType === 'geospatial' ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-cyan-500/50 hover:text-white'}`}
           >
-            صورة جغرافية
+            صورة جغرافية مسقطة
           </button>
           <button
             type="button"
             onClick={() => { setImageType('kml'); setUploadMode('file'); }}
             disabled={isUploading}
-            className={`px-4 py-2 rounded-lg border text-sm font-medium ${imageType === 'kml' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+            className={`px-4 py-2 rounded-xl border text-xs font-semibold transition ${imageType === 'kml' ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-cyan-500/50 hover:text-white'}`}
           >
             📁 تحليل KML / GeoJSON فوري
           </button>
         </div>
-        <p className="text-sm text-slate-500">
+        <p className="text-xs text-slate-400">
           {imageType === 'kml' 
             ? 'ارفع ملف KML أو GeoJSON صغير للمنطقة، وسيجلب السيرفر صور القمر الصناعي ويبدأ تحليلها فوراً!' 
             : 'اختر إذا كانت الصورة تحتوي على بيانات جغرافية مضمنة أو تحتاج إدخال بيانات الإسقاط يدوياً.'}
@@ -563,10 +563,11 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       {/* إعدادات القياس والإحداثيات */}
       {imageType !== 'kml' ? (
         <div className="mb-6 grid gap-4 lg:grid-cols-2">
-          <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-            <h3 className="font-semibold text-slate-800 mb-3">إعدادات الصورة</h3>
-            <label className="block mb-3 text-sm text-slate-700">
-              <span className="block mb-1">مقياس البكسل (متر/بكسل)</span>
+          <div className="p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+            <h3 className="font-semibold text-slate-200 mb-4 text-xs tracking-wider uppercase text-cyan-400">📐 معايير الصورة القياسية</h3>
+            
+            <label className="block mb-3 text-xs text-slate-300">
+              <span className="block mb-1.5 text-slate-400">مقياس البكسل (متر لكل بكسل)</span>
               <input
                 type="number"
                 value={pixelScale}
@@ -574,78 +575,80 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 step="0.01"
                 min="0.01"
                 disabled={isUploading}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-white font-mono-tech text-sm focus:outline-none focus:border-cyan-500 transition"
               />
             </label>
-            <label className="block mb-3 text-sm text-slate-700">
-              <span className="block mb-1">خط العرض المرجعي</span>
+            
+            <label className="block mb-3 text-xs text-slate-300">
+              <span className="block mb-1.5 text-slate-400">خط العرض المرجعي (Center Lat)</span>
               <input
                 type="number"
                 value={refLatitude}
                 onChange={(e) => setRefLatitude(e.target.value)}
                 step="0.0001"
                 disabled={isUploading}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-white font-mono-tech text-sm focus:outline-none focus:border-cyan-500 transition"
               />
             </label>
-            <label className="block text-sm text-slate-700">
-              <span className="block mb-1">خط الطول المرجعي</span>
+            
+            <label className="block text-xs text-slate-300">
+              <span className="block mb-1.5 text-slate-400">خط الطول المرجعي (Center Lon)</span>
               <input
                 type="number"
                 value={refLongitude}
                 onChange={(e) => setRefLongitude(e.target.value)}
                 step="0.0001"
                 disabled={isUploading}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-white font-mono-tech text-sm focus:outline-none focus:border-cyan-500 transition"
               />
             </label>
           </div>
 
           {imageType === 'geospatial' && (
-            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <h3 className="font-semibold text-slate-800 mb-3">معلومات الصورة الجغرافية</h3>
-              <label className="flex items-center gap-3 mb-4 text-sm text-slate-700">
+            <div className="p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+              <h3 className="font-semibold text-slate-200 mb-4 text-xs tracking-wider uppercase text-cyan-400">🌐 الإسقاط الجغرافي للمهمة</h3>
+              
+              <label className="flex items-center gap-3 mb-4 text-xs text-slate-300 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={useGeoMetadata}
                   onChange={(e) => setUseGeoMetadata(e.target.checked)}
                   disabled={isUploading}
-                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 rounded border-slate-800 bg-slate-900 text-cyan-500 focus:ring-cyan-500/20 focus:ring-offset-slate-950"
                 />
-                استخدام بيانات GeoTIFF المضمنة إذا كانت متاحة
+                <span>استخدام بيانات GeoTIFF المضمنة إذا كانت متاحة (تلقائي)</span>
               </label>
-              <label className="block text-sm text-slate-700">
-                <span className="block mb-1">نظام الإحداثيات (CRS)</span>
+              
+              <label className="block text-xs text-slate-300 mb-3">
+                <span className="block mb-1.5 text-slate-400">نظام الإحداثيات المرجعي (CRS)</span>
                 <input
                   type="text"
                   value={geoCrs}
                   onChange={(e) => setGeoCrs(e.target.value)}
                   disabled={isUploading}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-white font-mono-tech text-sm focus:outline-none focus:border-cyan-500 transition"
                 />
               </label>
-              <label className="block text-sm text-slate-700 mt-4">
-                <span className="block mb-1">ملف الإحداثيات المصاحب (TFW / World File) - اختياري</span>
+              
+              <label className="block text-xs text-slate-300">
+                <span className="block mb-1.5 text-slate-400">ملف الإحداثيات المصاحب (TFW / World File) - اختياري</span>
                 <input
                   type="file"
                   accept=".tfw,.jgw,.pgw,.wld"
                   onChange={handleTfwFileChange}
                   disabled={isUploading}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-slate-400 focus:outline-none focus:border-cyan-500 transition text-xs"
                 />
               </label>
-              <p className="text-xs text-slate-500 mt-3">
-                إذا كان الملف يحتوي على بيانات جغرافية، سيحاول النظام استخدامها؛ وإلا سيعتمد على القيم اليدوية أعلاه.
-              </p>
             </div>
           )}
         </div>
       ) : (
         <div className="mb-6 grid gap-4 lg:grid-cols-1">
-          <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-            <h3 className="font-semibold text-slate-800 mb-3">إعدادات خريطة القمر الصناعي</h3>
-            <label className="block mb-3 text-sm text-slate-700">
-              <span className="block mb-1">مستوى دقة القمر الصناعي (Zoom Level)</span>
+          <div className="p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+            <h3 className="font-semibold text-slate-200 mb-4 text-xs tracking-wider uppercase text-cyan-400">🛰️ إعدادات خريطة القمر الصناعي</h3>
+            <label className="block text-xs text-slate-300">
+              <span className="block mb-1.5 text-slate-400">مستوى دقة القمر الصناعي (Zoom Level)</span>
               <input
                 type="number"
                 value={zoom}
@@ -653,157 +656,138 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
                 min="14"
                 max="21"
                 disabled={isUploading}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2 text-white font-mono-tech text-sm focus:outline-none focus:border-cyan-500 transition"
               />
-              <span className="text-[10px] text-slate-400 block mt-1">مستوى التقريب الافتراضي هو 18 (يعطي دقة 0.5 متر لكل بكسل تقريباً).</span>
+              <span className="text-[10px] text-slate-500 block mt-1.5">مستوى التقريب الافتراضي هو 18 (يعطي دقة 0.5 متر لكل بكسل تقريباً).</span>
             </label>
           </div>
         </div>
       )}
 
-      {/* معلومات النظام */}
-      <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <h3 className="font-semibold text-blue-800 mb-2">📋 مواصفات الرفع:</h3>
+      {/* مواصفات الرفع الفنية */}
+      <div className="mb-6 p-4 bg-cyan-950/20 border border-cyan-800/30 rounded-2xl">
+        <h3 className="font-semibold text-cyan-300 mb-2 text-xs">📋 مواصفات ومحددات الاستيراد الفنية:</h3>
         {imageType === 'kml' ? (
-          <ul className="text-sm text-blue-700 space-y-1">
-            <li>• <strong>الحجم الأقصى:</strong> 10 ميجابايت</li>
-            <li>• <strong>الصيغ المدعومة:</strong> KML, GeoJSON, JSON</li>
-            <li>• <strong>سرعة التحليل:</strong> فائقة السرعة (بين 10-20 ثانية)</li>
-            <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
+          <ul className="text-xs text-slate-400 space-y-1">
+            <li>• <strong className="text-cyan-400">الحجم الأقصى لملف المسح:</strong> 10 ميجابايت</li>
+            <li>• <strong className="text-cyan-400">التنسيقات المدعومة:</strong> KML, GeoJSON, JSON</li>
+            <li>• <strong className="text-cyan-400">سرعة التحليل المترية:</strong> فائقة السرعة (بين 10-20 ثانية)</li>
+            <li>• <strong className="text-cyan-400">نظام الإحداثيات المستهدف:</strong> WGS 84 (EPSG:4326)</li>
           </ul>
         ) : (
-          <ul className="text-sm text-blue-700 space-y-1">
-            <li>• <strong>الحجم الأقصى:</strong> 1 جيجابايت</li>
-            <li>• <strong>الصيغ المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
-            <li>• <strong>وقت المعالجة:</strong> 120 ثانية كحد أقصى (من PDF)</li>
-            <li>• <strong>نظام الإحداثيات:</strong> WGS 84 (EPSG:4326)</li>
-            <li>• <strong>إعدادات SAM:</strong> يتم تحميلها من صفحة <Link href="/settings" className="text-blue-700 underline">الإعدادات</Link></li>
+          <ul className="text-xs text-slate-400 space-y-1">
+            <li>• <strong className="text-cyan-400">الحجم الأقصى للصورة الجوية:</strong> 1 جيجابايت (Chunked Upload مفعل)</li>
+            <li>• <strong className="text-cyan-400">التنسيقات المدعومة:</strong> JPG, PNG, TIFF, GeoTIFF</li>
+            <li>• <strong className="text-cyan-400">وقت المعالجة المترية:</strong> 120 ثانية كحد أقصى</li>
+            <li>• <strong className="text-cyan-400">إعدادات ذكاء SAM:</strong> يتم ربطها من إعدادات النظام المخصصة</li>
           </ul>
         )}
       </div>
 
       {imageType !== 'kml' && (
-        <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-          <h3 className="font-semibold text-slate-800 mb-3">وضع الرفع</h3>
+        <div className="mb-6 p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+          <h3 className="font-semibold text-slate-200 mb-3 text-xs">وضع وقناة استيراد الملف</h3>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={() => setUploadMode('file')}
               disabled={isUploading}
-              className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'file' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+              className={`px-4 py-2 rounded-xl border text-xs font-semibold transition ${uploadMode === 'file' ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-cyan-500/50 hover:text-white'}`}
             >
-              رفع ملف
+              تحميل ملف محلي من الجهاز
             </button>
             <button
               type="button"
               onClick={() => setUploadMode('url')}
               disabled={isUploading}
-              className={`px-4 py-2 rounded-lg border text-sm font-medium ${uploadMode === 'url' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:border-blue-500'}`}
+              className={`px-4 py-2 rounded-xl border text-xs font-semibold transition ${uploadMode === 'url' ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-cyan-500/50 hover:text-white'}`}
             >
-              رابط خارجي
+              رابط سحابي خارجي (Google Drive)
             </button>
           </div>
-          <p className="text-sm text-slate-500 mt-3">
-            اختر رفع الملف مباشرةً إذا كان صغيراً، أو استخدم رابط الملف إذا كان كبيراً أو موجوداً في الخدمة السحابية.
-          </p>
         </div>
       )}
 
       {uploadMode === 'url' ? (
-        <div className="mb-6 p-6 bg-white rounded-2xl shadow-sm border border-slate-200">
-          <label className="block text-sm text-slate-700 mb-3">
-            <span className="block mb-1">أدخل رابط Google Drive أو رابط خارجي</span>
+        <div className="mb-6 p-5 bg-slate-950/50 rounded-2xl border border-slate-800">
+          <label className="block text-xs text-slate-300 mb-4">
+            <span className="block mb-2 text-slate-400">أدخل رابط Google Drive أو رابط خارجي للملف</span>
             <input
               type="url"
               value={remoteUrl}
               onChange={(e) => setRemoteUrl(e.target.value)}
               disabled={isUploading}
               placeholder="https://drive.google.com/..."
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-slate-900 rounded-xl border border-slate-800 px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500 transition text-sm font-mono-tech"
             />
           </label>
           <button
             type="button"
             onClick={uploadRemoteUrl}
             disabled={isUploading || !remoteUrl.trim()}
-            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            استيراد من Google Drive / رابط خارجي
+            <span>🔗</span> استيراد ومعالجة من الرابط
           </button>
-          <p className="text-xs text-slate-500 mt-3">
-            في هذا الوضع، سيقوم السيرفر بسحب الملف من Google Drive أو المصدر الخارجي بدون رفعه من جهازك.
-          </p>
         </div>
       ) : (
         <div className="mb-6">
-          <label className="block text-gray-700 mb-2 font-medium">
-            {imageType === 'kml' ? 'اختر ملف KML أو GeoJSON للمنطقة' : 'اختر صورة جوية'}
+          <label className="block text-slate-300 mb-2.5 text-xs font-semibold">
+            {imageType === 'kml' ? 'ملف الرفع المساحي KML أو GeoJSON' : 'ملف الصورة الجوية'}
           </label>
           <div
             {...getRootProps()}
-            className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
+            className={`border-2 border-dashed rounded-2xl p-10 text-center transition cursor-pointer relative ${
               isDragActive
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-300 hover:border-blue-500'
-            } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                ? 'border-cyan-400 bg-cyan-950/20'
+                : 'border-slate-800 hover:border-cyan-500/40 bg-slate-950/30'
+            } ${isUploading ? 'opacity-50 cursor-not-allowed radar-sweep' : ''}`}
           >
             <input {...getInputProps()} disabled={isUploading} />
             
             {isUploading ? (
-              <div className="space-y-4">
-                <div className="w-16 h-16 mx-auto">
-                  <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+              <div className="space-y-4 relative z-10">
+                <div className="w-12 h-12 mx-auto relative">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-400"></div>
                 </div>
-                <p className="text-gray-600 font-medium">جاري رفع ومعالجة الملف...</p>
+                <p className="text-cyan-400 font-medium text-sm">جاري رفع ومعالجة الملف على خادم GIS...</p>
                 
-                {/* شريط التقدم */}
-                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                {/* شريط التقدم النيوني */}
+                <div className="max-w-xs mx-auto bg-slate-900 rounded-full h-2 border border-slate-800 overflow-hidden">
                   <div
-                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    className="bg-cyan-400 h-full rounded-full transition-all duration-300"
                     style={{ width: `${uploadProgress}%` }}
                   ></div>
                 </div>
-                <p className="text-sm text-gray-500">{uploadProgress}%</p>
+                <p className="text-xs font-mono-tech text-slate-400">{uploadProgress}%</p>
               </div>
             ) : (
-              <>
-                <svg
-                  className="w-16 h-16 mx-auto text-gray-400 mb-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                  />
-                </svg>
-                <p className="text-lg text-gray-600">
-                  {isDragActive ? 'أفلت الملف هنا...' : 'اسحب الملف هنا أو انقر للاختيار'}
+              <div className="py-2">
+                <span className="text-4xl block mb-3 text-slate-500">📤</span>
+                <p className="text-sm text-slate-200 font-semibold">
+                  {isDragActive ? 'أفلت الملف هنا للتشخيص المساحي...' : 'اسحب ملف القياس هنا أو انقر لاختياره'}
                 </p>
-                <p className="text-sm text-gray-400 mt-2">
-                  {imageType === 'kml' ? 'يدعم: KML, GeoJSON, JSON' : 'يدعم: JPG, PNG, TIFF, GeoTIFF'}
+                <p className="text-xs text-slate-500 mt-2">
+                  {imageType === 'kml' ? 'التنسيقات: KML, GeoJSON, JSON' : 'التنسيقات: JPG, PNG, TIFF, GeoTIFF'}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {imageType === 'kml' ? '(حتى 10 ميجابايت)' : '(حتى 1 جيجابايت)'}
+                <p className="text-[10px] text-slate-600 mt-1">
+                  {imageType === 'kml' ? '(الحد الأقصى: 10 ميجابايت)' : '(الحد الأقصى: 1 جيجابايت)'}
                 </p>
-              </>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* اختيار المنطقة */}
+      {/* اختيار منطقة الدراسة */}
       <div className="mb-6">
-        <label className="block text-gray-700 mb-2 font-medium">
-          منطقة الدراسة (اختياري)
+        <label className="block text-slate-300 mb-2 text-xs font-semibold">
+          منطقة الدراسة والأوقاف الجغرافية المرجعية
         </label>
         <select
           value={selectedRegion}
           onChange={(e) => setSelectedRegion(e.target.value)}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full p-3 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl focus:outline-none focus:border-cyan-500 transition text-xs"
           disabled={isUploading}
         >
           {regions.map((region) => (
@@ -812,33 +796,33 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
             </option>
           ))}
         </select>
-        <p className="text-sm text-gray-500 mt-1">
-          يساعد في تحسين دقة الإحداثيات الجغرافية
+        <p className="text-[10px] text-slate-500 mt-1.5">
+          يساعد في توجيه إسقاط الإحداثيات تلقائياً وضبط الخرائط المرجعية للمحافظات
         </p>
       </div>
 
-      {/* معلومات الملف المرفوع */}
+      {/* معلومات تشخيص الملف بعد الاختيار */}
       {fileInfo && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <h4 className="font-semibold text-green-800 mb-2">
-            ✓ تم اختيار الملف بنجاح
+        <div className="mb-6 p-4 bg-emerald-950/20 border border-emerald-800/40 rounded-2xl">
+          <h4 className="font-semibold text-emerald-400 mb-2 text-xs flex items-center gap-1.5">
+            <span>✓</span> تم تشخيص وتجهيز الملف للمهمة
           </h4>
-          <div className="space-y-2 text-sm text-green-700">
-            <div className="flex justify-between">
+          <div className="space-y-1.5 text-xs text-slate-400 font-mono-tech">
+            <div className="flex justify-between border-b border-slate-900 pb-1">
               <span>اسم الملف:</span>
-              <span className="font-medium">{fileInfo.name}</span>
+              <span className="text-slate-200">{fileInfo.name}</span>
+            </div>
+            <div className="flex justify-between border-b border-slate-900 pb-1">
+              <span>الحجم الكلي:</span>
+              <span className="text-slate-200">{fileInfo.size} MB</span>
+            </div>
+            <div className="flex justify-between border-b border-slate-900 pb-1">
+              <span>القناة المستخدمة:</span>
+              <span className="text-slate-200">{fileInfo.type}</span>
             </div>
             <div className="flex justify-between">
-              <span>الحجم:</span>
-              <span className="font-medium">{fileInfo.size} ميجابايت</span>
-            </div>
-            <div className="flex justify-between">
-              <span>النوع:</span>
-              <span className="font-medium">{fileInfo.type}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>المنطقة:</span>
-              <span className="font-medium">
+              <span>نطاق المنطقة المحددة:</span>
+              <span className="text-slate-200">
                 {regions.find(r => r.id === fileInfo.region)?.name}
               </span>
             </div>
@@ -846,32 +830,21 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
         </div>
       )}
 
-      {/* رسائل الخطأ */}
+      {/* رسائل خطأ تشخيص البيانات */}
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <h4 className="font-semibold text-red-800 mb-2">⚠️ خطأ في الرفع</h4>
-          <p className="text-sm text-red-700">{error}</p>
-          <div className="mt-3">
-            <button
-              onClick={() => setError(null)}
-              className="text-sm text-red-600 hover:text-red-800"
-            >
-              إغلاق
-            </button>
-          </div>
+        <div className="mb-6 p-4 bg-red-950/20 border border-red-800/40 rounded-2xl">
+          <h4 className="font-semibold text-red-400 mb-1.5 text-xs flex items-center gap-1.5">
+            <span>⚠️</span> خطأ تشخيص البيانات
+          </h4>
+          <p className="text-xs text-slate-400 leading-relaxed">{error}</p>
+          <button
+            onClick={() => setError(null)}
+            className="text-[10px] text-red-400 hover:text-red-300 underline mt-2"
+          >
+            تجاهل الخطأ وإغلاق
+          </button>
         </div>
       )}
-      <div className="mt-8 p-4 bg-purple-50 rounded-lg border border-purple-200">
-        <h3 className="font-semibold text-purple-800 mb-2">
-          🚀 النظام المستقبلي:
-        </h3>
-        <ul className="text-sm text-purple-700 space-y-1">
-          <li>• <strong>نظام فريق الوكلاء:</strong> منسق + مقتطف + متخصصين + ناقد</li>
-          <li>• <strong>ذاكرة مشتركة:</strong> قاعدة بيانات + نظام رسائل</li>
-          <li>• <strong>حلقة التدقيق البشري:</strong> تعلم من التصحيحات</li>
-          <li>• <strong>تكامل متعدد:</strong> ويب + أندرويد + GIS</li>
-        </ul>
-      </div>
     </div>
   );
 }

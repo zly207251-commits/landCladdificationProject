@@ -181,121 +181,124 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
 
   if (!jobId) {
     return (
-      <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">لا توجد مهمة حالية</h2>
-        <p className="text-gray-600 mb-6">
-          لم يتم رفع أي صورة بعد. ارفع صورة لبدء مهمة جديدة ومتابعة حالة المعالجة.
+      <div className="engineering-glass glass-glow-cyan p-8 text-center rounded-3xl">
+        <h2 className="text-lg font-bold text-white mb-3">لا توجد مهمة مساحية نشطة حالياً</h2>
+        <p className="text-xs text-slate-400 mb-6">
+          لم يتم تحديد أو رفع أي مخطط مساحي بعد. الرجاء العودة للواجهة الرئيسية واستيراد ملف.
         </p>
         <button
-          onClick={() => router.refresh()}
-          className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+          onClick={() => router.push('/')}
+          className="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 text-slate-950 text-xs font-bold rounded-xl transition"
         >
-          العودة إلى الرفع
+          العودة للرئيسية المساحية 🏠
         </button>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl p-8">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-semibold text-gray-800">
-          لوحة تتبع المعالجة
-        </h2>
-        
-<div className="flex flex-wrap gap-2 items-center">
-        {jobId && (
-          <div className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
-            رقم المهمة: {jobId}
-          </div>
-        )}
-        {backendStatus && (
-          <div className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
-            حالة الخادم: {backendStatus}
-          </div>
-        )}
-      </div>
-      {pollError && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          <strong>خطأ حالة المهمة:</strong> {pollError}
+    <div className="engineering-glass glass-glow-cyan p-8 rounded-3xl relative">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 border-b border-slate-800 pb-4">
+        <div>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <span>🔄</span> لوحة تتبع ومعالجة وكلاء Swarm
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">متابعة حالة التشخيص الجغرافي وتقسيم القطع وتصنيف الأراضي بالثانية.</p>
         </div>
-      )}
+        
+        <div className="flex flex-wrap gap-2 items-center text-xs font-mono-tech">
+          <div className="px-3 py-1.5 bg-slate-950 border border-slate-800 text-slate-300 rounded-xl">
+            TASK: {jobId}
+          </div>
+          {backendStatus && (
+            <div className="px-3 py-1.5 bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-xl font-bold">
+              STATUS: {backendStatus}
+            </div>
+          )}
+        </div>
       </div>
 
+      {pollError && (
+        <div className="mb-6 p-4 bg-red-950/20 border border-red-800/30 text-red-400 text-xs rounded-2xl">
+          <strong>خطأ حالة الاتصال:</strong> {pollError}
+        </div>
+      )}
+
       {/* شريط التقدم الرئيسي */}
-      <div className="mb-8">
-        <div className="flex justify-between mb-2">
-          <span className="text-gray-600 font-medium">التقدم الكلي</span>
-          <span className="text-gray-800 font-semibold">
+      <div className="mb-8 p-5 bg-slate-950/40 border border-slate-850 rounded-2xl">
+        <div className="flex justify-between mb-2 text-xs">
+          <span className="text-slate-400 font-semibold">معدل التقدم الكلي للعملية</span>
+          <span className="text-white font-mono-tech font-bold">
             {Math.round((processingTime / estimatedTime) * 100)}%
           </span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-4">
+        <div className="w-full bg-slate-900 border border-slate-850 rounded-full h-3 overflow-hidden">
           <div
-            className="bg-gradient-to-r from-blue-500 to-green-500 h-4 rounded-full transition-all duration-500"
+            className="bg-gradient-to-r from-cyan-500 to-emerald-500 h-full rounded-full transition-all duration-500"
             style={{ 
               width: `${Math.min(100, (processingTime / estimatedTime) * 100)}%` 
             }}
           ></div>
         </div>
-        <div className="flex justify-between mt-2 text-sm text-gray-500">
+        <div className="flex justify-between mt-2.5 text-[10px] text-slate-500 font-mono-tech">
           <span>الوقت المنقضي: {formatTime(processingTime)}</span>
-          <span>الوقت المتبقي: {formatTime(Math.max(0, estimatedTime - processingTime))}</span>
+          <span>الوقت المتبقي المقدر: {formatTime(Math.max(0, estimatedTime - processingTime))}</span>
         </div>
       </div>
 
       {/* تقدم معالجة القطع */}
-      {jobId && (
+      <div className="mb-8">
         <TileProgress taskId={jobId} isProcessing={isProcessing} />
-      )}
+      </div>
 
       {/* مراحل المعالجة */}
       <div className="mb-8">
-        <h3 className="font-semibold mb-4 text-gray-800 border-b pb-2">
-          مراحل المعالجة التفصيلية
+        <h3 className="font-bold text-slate-200 text-xs mb-4 border-b border-slate-850 pb-2 tracking-wider uppercase text-cyan-400">
+          📍 مراحل وسير خط معالجة البيانات
         </h3>
         
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {Object.keys(PROCESSING_STAGES).map((stageKey) => {
             const details = getStageDetails(stageKey);
+            const status = getStageStatus(stageKey);
             
             return (
               <div
                 key={stageKey}
-                className={`p-4 rounded-lg border transition-all ${details.color} ${details.textColor} ${
-                  details.status === 'in-progress' ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-200'
+                className={`p-4 rounded-2xl border transition-all text-xs flex flex-col justify-between ${
+                  status === 'completed' ? 'bg-emerald-950/20 border-emerald-900/40 text-slate-300' :
+                  status === 'in-progress' ? 'bg-cyan-950/20 border-cyan-500/40 text-white shadow-lg shadow-cyan-950/20' :
+                  'bg-slate-950/30 border-slate-850 text-slate-500'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3 space-x-reverse">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
                     <span className="text-xl">{details.icon}</span>
                     <div>
-                      <h4 className="font-semibold">{details.name}</h4>
-                      <p className="text-sm opacity-80">{details.description}</p>
+                      <h4 className="font-bold text-slate-200 text-xs">{details.name}</h4>
+                      <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">{details.description}</p>
                     </div>
                   </div>
                   
-                  {details.status === 'in-progress' && (
-                    <div className="flex items-center">
-                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500 mr-2"></div>
-                      <span className="text-sm font-medium">جاري التنفيذ...</span>
+                  {status === 'in-progress' && (
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded font-bold text-[9px] animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                      معالجة
                     </div>
                   )}
                 </div>
                 
                 {/* معلومات إضافية للمرحلة */}
-                {details.status === 'in-progress' && (
-                  <div className="mt-3 pt-3 border-t border-opacity-50 border-current">
-                    <div className="flex justify-between text-sm">
-                      <span>الوكلاء النشطين:</span>
-                      <span className="font-medium">
-                        {stageKey.includes('orchestrator') && 'المنسق'}
-                        {stageKey.includes('extractor') && 'المقتطف'}
-                        {stageKey.includes('agent') && 'وكيل الأراضي'}
-                        {stageKey.includes('reviewer') && 'الناقد'}
-                        {stageKey.includes('gis') && 'محرك التصدير'}
-                      </span>
-                    </div>
+                {status === 'in-progress' && (
+                  <div className="mt-3 pt-3 border-t border-cyan-950 text-[10px] flex justify-between text-slate-400 font-mono-tech">
+                    <span>الوكيل المستدعى:</span>
+                    <span className="font-bold text-cyan-400">
+                      {stageKey.includes('orchestrator') && 'ORCHESTRATOR'}
+                      {stageKey.includes('extractor') && 'BOUNDARY_EXTRACTOR'}
+                      {stageKey.includes('agent') && 'LAND_CLASSIFIER'}
+                      {stageKey.includes('reviewer') && 'CRITIC_AGENT'}
+                      {stageKey.includes('gis') && 'GIS_EXPORTER'}
+                    </span>
                   </div>
                 )}
               </div>
@@ -305,37 +308,33 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
       </div>
 
       {/* معلومات النظام */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        {/* معلومات التقنية */}
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h4 className="font-semibold mb-2 text-gray-800">📊 معلومات تقنية</h4>
-          <ul className="text-sm text-gray-600 space-y-1">
-            <li>• وقت المعالجة: {estimatedTime} ثانية</li>
-            <li>• المراحل النشطة: {stages.filter(s => getStageStatus(s.id) === 'in-progress').length}</li>
-            <li>• الوكلاء: {Object.keys(PROCESSING_STAGES).length} وكيل</li>
-            <li>• حالة النظام: {isProcessing ? 'نشط' : 'جاهز'}</li>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-xs">
+        <div className="bg-slate-950/50 p-4 border border-slate-850 rounded-2xl">
+          <h4 className="font-bold mb-2.5 text-slate-200 flex items-center gap-1">📊 مواصفات المعالجة</h4>
+          <ul className="text-slate-400 space-y-1.5 font-mono-tech text-[10px]">
+            <li>• وقت المحاكاة: {estimatedTime} ثانية</li>
+            <li>• القنوات المفعلة: {stages.filter(s => getStageStatus(s.id) === 'in-progress').length} نشطة</li>
+            <li>• إجمالي الوكلاء: {Object.keys(PROCESSING_STAGES).length} وكلاء مستقلين</li>
+            <li>• حالة المحرك: {isProcessing ? 'Active Running' : 'Idle Ready'}</li>
           </ul>
         </div>
 
-        {/* نظام الوكلاء */}
-        <div className="bg-blue-50 p-4 rounded-lg">
-          <h4 className="font-semibold mb-2 text-blue-800">🤖 نظام فريق الوكلاء</h4>
-          <ul className="text-sm text-blue-700 space-y-1">
-            <li>• <strong>المنسق:</strong> يوزع المهام</li>
-            <li>• <strong>المقتطف:</strong> يرسم المعالم</li>
-            <li>• <strong>المتخصصون:</strong> يصنفون الأنواع</li>
-            <li>• <strong>الناقد:</strong> يكتشف التناقضات</li>
+        <div className="bg-slate-950/50 p-4 border border-slate-850 rounded-2xl">
+          <h4 className="font-bold mb-2.5 text-slate-200 flex items-center gap-1">🤖 أدوار وكلاء الذكاء الاصطناعي</h4>
+          <ul className="text-slate-400 space-y-1.5 text-[10px]">
+            <li>• <strong className="text-cyan-400">المنسق:</strong> يوجه المهام ويشرف على الاتصال.</li>
+            <li>• <strong className="text-cyan-400">المقتطف:</strong> يستخرج المضلعات الهندسية عبر SAM.</li>
+            <li>• <strong className="text-cyan-400">المتخصصون:</strong> يصنفون التربة ويسجلون المعالم.</li>
           </ul>
         </div>
 
-        {/* الذاكرة المشتركة */}
-        <div className="bg-green-50 p-4 rounded-lg">
-          <h4 className="font-semibold mb-2 text-green-800">💾 الذاكرة المشتركة</h4>
-          <ul className="text-sm text-green-700 space-y-1">
-            <li>• قاعدة بيانات: SQLite/Redis</li>
-            <li>• نظام رسائل: Queue/WebSocket</li>
-            <li>• حالة المهام: محفوظة</li>
-            <li>• قابلية التوسع: Plug-and-Play</li>
+        <div className="bg-slate-950/50 p-4 border border-slate-850 rounded-2xl">
+          <h4 className="font-bold mb-2.5 text-slate-200 flex items-center gap-1">💾 سجل الذاكرة المشتركة</h4>
+          <ul className="text-slate-400 space-y-1.5 text-[10px] font-mono-tech">
+            <li>• Database: SQLite (shared_memory.db)</li>
+            <li>• Channels: Event-Driven Message Bus</li>
+            <li>• Task State: Persistent inside tables</li>
+            <li>• Architecture: Decoupled routing</li>
           </ul>
         </div>
       </div>
@@ -345,35 +344,36 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
         {!isProcessing ? (
           <button
             onClick={startProcessing}
-            className="flex-1 py-3 px-6 bg-gradient-to-r from-blue-600 to-green-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-green-700 transition-all shadow-lg hover:shadow-xl"
+            className="flex-1 py-3 px-6 bg-cyan-600 hover:bg-cyan-500 text-slate-950 rounded-xl font-bold text-xs transition-all shadow-lg"
           >
-            🚀 بدء المعالجة
+            🚀 بدء معالجة المهمة المساحية
           </button>
         ) : (
           <button
             disabled
-            className="flex-1 py-3 px-6 bg-gray-400 text-white rounded-xl font-semibold cursor-not-allowed"
+            className="flex-1 py-3 px-6 bg-slate-850 border border-slate-800 text-slate-500 rounded-xl font-semibold text-xs cursor-not-allowed flex items-center justify-center gap-2"
           >
-            🔄 جاري المعالجة...
+            <span className="animate-spin rounded-full h-3 w-3 border-t-2 border-b-2 border-slate-400"></span>
+            جاري المعالجة والتحليل الذكي...
           </button>
         )}
         
         <button
           onClick={() => router.refresh()}
-          className="py-3 px-6 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-colors"
+          className="py-3 px-6 bg-slate-900 border border-slate-800 hover:border-slate-750 text-slate-300 rounded-xl font-semibold text-xs transition-colors"
         >
           🔄 إعادة تحميل
         </button>
       </div>
 
       {retryMessage && (
-        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
+        <div className="mt-4 p-4 bg-amber-950/20 border border-amber-900/30 text-amber-400 text-xs rounded-2xl leading-relaxed">
           {retryMessage}
         </div>
       )}
 
       {retryError && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <div className="mt-4 p-4 bg-red-950/20 border border-red-800/30 text-red-400 text-xs rounded-2xl leading-relaxed">
           {retryError}
         </div>
       )}
@@ -407,70 +407,65 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
                 setIsRetrying(false);
               }
             }}
-            className="py-3 px-6 bg-orange-600 text-white rounded-xl font-semibold hover:bg-orange-700 transition-all shadow-lg"
+            className="py-3 px-6 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-xl font-bold text-xs transition-all shadow-lg"
           >
-            {isRetrying ? '⏳ جاري إعادة المحاولة...' : '🔁 إعادة محاولة المعالجة'}
+            {isRetrying ? '⏳ جاري إعادة المحاولة...' : '🔁 إعادة محاولة معالجة المهمة'}
           </button>
         </div>
       )}
 
       {/* 📋 سجلات الوكلاء بالتفصيل */}
       {jobId && (
-        <div className="mt-6 pt-6 border-t border-gray-200">
+        <div className="mt-6 pt-6 border-t border-slate-800">
           <button
             onClick={() => {
               setShowLogs(!showLogs);
               if (!showLogs) fetchLogs(jobId);
             }}
-            className="w-full flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+            className="w-full flex items-center justify-between p-4 bg-slate-950/40 border border-slate-850 rounded-2xl hover:bg-slate-950/60 transition-colors text-xs"
           >
             <div className="flex items-center gap-3">
-              <span className="text-2xl">📋</span>
+              <span className="text-xl">📋</span>
               <div className="text-right">
-                <h3 className="font-semibold text-purple-800">سجلات وكلاء المعالجة</h3>
-                <p className="text-sm text-purple-600">
-                  {logsSummary?.total_messages || 0} رسالة • آخر: {logsSummary?.last_message?.sender || '-'}
+                <h3 className="font-bold text-slate-200">سجلات ومراسلات وكلاء المعالجة</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {logsSummary?.total_messages || 0} رسالة مسجلة بالذاكرة • آخر مرسل: {logsSummary?.last_message?.sender || '-'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {logsLoading && <span className="text-purple-600">جاري التحميل...</span>}
-              <span className={`transform transition-transform ${showLogs ? 'rotate-180' : ''}`}>▼</span>
+              {logsLoading && <span className="text-[10px] text-cyan-400 font-mono-tech">Loading logs...</span>}
+              <span className="text-slate-400">▼</span>
             </div>
           </button>
 
           {showLogs && (
-            <div className="mt-4 p-4 bg-gray-900 rounded-lg max-h-96 overflow-y-auto">
+            <div className="mt-4 p-4 bg-slate-950 border border-slate-850 rounded-2xl max-h-96 overflow-y-auto font-mono-tech text-[11px] leading-relaxed">
               {logs.length === 0 ? (
-                <p className="text-gray-400 text-center">لا توجد سجلات بعد</p>
+                <p className="text-slate-500 text-center py-4">لا توجد رسائل سجل مسجلة بالذاكرة المساحية بعد.</p>
               ) : (
-                <div className="space-y-2 font-mono text-sm">
+                <div className="space-y-3">
                   {logs.map((log: any, index: number) => (
                     <div
                       key={log.id || index}
-                      className={`p-2 rounded border-l-4 ${
-                        log.type === 'ERROR' ? 'border-red-500 bg-red-900/30' :
-                        log.type === 'WARNING' ? 'border-yellow-500 bg-yellow-900/30' :
-                        log.type === 'COMPLETED' ? 'border-green-500 bg-green-900/30' :
-                        'border-blue-500 bg-blue-900/30'
+                      className={`p-3 rounded-xl border-r-4 ${
+                        log.type === 'ERROR' ? 'border-red-500 bg-red-950/20 text-red-300' :
+                        log.type === 'WARNING' ? 'border-amber-500 bg-amber-950/20 text-amber-300' :
+                        log.type === 'COMPLETED' ? 'border-emerald-500 bg-emerald-950/20 text-emerald-300' :
+                        'border-cyan-500 bg-cyan-950/20 text-cyan-300'
                       }`}
                     >
-                      <div className="flex justify-between items-start">
-                        <span className="text-gray-400 text-xs">
+                      <div className="flex justify-between items-center border-b border-slate-900/60 pb-1.5 mb-1.5">
+                        <span className="text-slate-500 text-[9px]">
                           {new Date(log.created_at).toLocaleTimeString('ar-SA')}
                         </span>
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                          log.type === 'ERROR' ? 'bg-red-600 text-white' :
-                          log.type === 'WARNING' ? 'bg-yellow-600 text-white' :
-                          log.type === 'COMPLETED' ? 'bg-green-600 text-white' :
-                          'bg-blue-600 text-white'
-                        }`}>
+                        <span className="font-bold uppercase text-[9px] tracking-wider">
                           {log.sender}
                         </span>
                       </div>
-                      <p className="text-gray-200 mt-1">{log.content}</p>
+                      <p className="text-slate-200 mt-1 font-sans">{log.content}</p>
                       {log.payload && Object.keys(log.payload).length > 0 && (
-                        <pre className="text-gray-500 text-xs mt-1 overflow-x-auto">
+                        <pre className="text-slate-500 text-[10px] mt-2 bg-black/30 p-2 rounded overflow-x-auto">
                           {JSON.stringify(log.payload, null, 2)}
                         </pre>
                       )}
@@ -484,9 +479,9 @@ export default function ProcessingDashboard({ jobId, onComplete, onError }: Proc
       )}
 
       {/* تذييل */}
-      <div className="mt-6 pt-6 border-t border-gray-200">
-        <p className="text-sm text-gray-500 text-center">
-          ⚡ النظام مصمم حسب مواصفات ملف الورد: نظام فريق وكلاء مع ذاكرة مشتركة وتكامل متعدد
+      <div className="mt-6 pt-6 border-t border-slate-800">
+        <p className="text-[10px] text-slate-500 text-center">
+          ⚡ النظام متكامل متعدد التنسيقات (ويب / أوتوكاد / غوغل إيرث) مع حلقة التدقيق البشري وإعادة التعلم.
         </p>
       </div>
     </div>

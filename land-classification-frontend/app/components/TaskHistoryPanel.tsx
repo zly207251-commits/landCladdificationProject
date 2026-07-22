@@ -22,7 +22,7 @@ export default function TaskHistoryPanel() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.tasks}?limit=10`, {
+      const resp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.tasks}?limit=50`, {
         cache: 'no-store',
       });
       if (!resp.ok) {
@@ -32,9 +32,26 @@ export default function TaskHistoryPanel() {
       const data = await resp.json();
       setTasks(data.tasks || []);
     } catch (err: any) {
-      setError(err?.message || "تعذر جلب قائمة المهام.");
+      setError(err?.message || "تعذر جلب قائمة المهام الجغرافية.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("هل أنت متأكد من رغبتك في مسح كافة البيانات والصور المساحية لهذه المهمة نهائياً من الخادم؟")) return;
+    
+    try {
+      const resp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}`, {
+        method: 'DELETE'
+      });
+      if (!resp.ok) {
+        throw new Error("فشل حذف السجلات من الخادم");
+      }
+      setTasks(prev => prev.filter(t => t.task_id !== taskId));
+    } catch (err: any) {
+      alert("خطأ أثناء المسح: " + err.message);
     }
   };
 
@@ -44,70 +61,95 @@ export default function TaskHistoryPanel() {
 
   const renderStatusBadge = (status: string) => {
     const lower = status.toLowerCase();
-    const base = "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold";
-    if (lower.includes("completed") || lower.includes("done") || lower.includes("مكتملة")) return `${base} bg-emerald-100 text-emerald-700`;
-    if (lower.includes("failed") || lower.includes("error") || lower.includes("فشل")) return `${base} bg-red-100 text-red-700`;
-    if (lower.includes("running") || lower.includes("processing") || lower.includes("قيد التنفيذ")) return `${base} bg-amber-100 text-amber-700`;
-    return `${base} bg-slate-100 text-slate-700`;
+    const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold border";
+    if (lower.includes("completed") || lower.includes("done") || lower.includes("مكتملة")) {
+      return `${base} bg-emerald-950/40 text-emerald-400 border-emerald-800/40`;
+    }
+    if (lower.includes("failed") || lower.includes("error") || lower.includes("فشل")) {
+      return `${base} bg-red-950/40 text-red-400 border-red-800/40`;
+    }
+    if (lower.includes("running") || lower.includes("processing") || lower.includes("قيد التنفيذ")) {
+      return `${base} bg-amber-950/40 text-amber-400 border-amber-800/40 animate-pulse`;
+    }
+    return `${base} bg-slate-950/40 text-slate-400 border-slate-800`;
   };
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-lg">
-      <div className="flex items-center justify-between gap-3 mb-6">
+    <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl relative">
+      <div className="flex items-center justify-between gap-3 mb-6 border-b border-slate-800 pb-4">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">سجل المهام السابقة</h2>
-          <p className="text-sm text-slate-500">اختر مهمة لعرض تفاصيلها بسرعة.</p>
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <span>📜</span> أرشيف السجلات المساحية
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">سجل كامل بمهام تحليل الأراضي المنفذة قديماً من قبل الوكلاء.</p>
         </div>
         <button
           type="button"
           onClick={fetchTasks}
-          className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
+          className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-white transition text-xs font-semibold"
         >
-          تحديث القائمة
+          تحديث الأرشيف
         </button>
       </div>
 
       {loading ? (
-        <p className="text-sm text-slate-500">جاري تحميل آخر المهام...</p>
+        <div className="py-12 text-center text-xs text-slate-400 font-mono-tech">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-400 mx-auto mb-3"></div>
+          Loading tasks from database...
+        </div>
       ) : error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <div className="p-4 bg-red-950/20 border border-red-800/30 text-red-400 text-xs rounded-2xl">{error}</div>
       ) : tasks.length === 0 ? (
-        <p className="text-sm text-slate-500">لا توجد مهام محفوظة بعد.</p>
+        <div className="py-12 text-center border border-dashed border-slate-800 rounded-2xl text-xs text-slate-500">
+          لا توجد مهام محفوظة حالياً. ابدأ برفع مخطط مساحي جديد.
+        </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
           {tasks.map((task) => (
             <div
               key={task.task_id}
-              className="group rounded-3xl border border-slate-200 p-4 transition hover:border-blue-300 hover:shadow-lg"
+              className="group rounded-2xl bg-slate-950/30 border border-slate-850 p-4 transition hover:border-cyan-500/30 hover:shadow-lg relative"
             >
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">معرف المهمة</p>
-                  <h3 className="text-base font-semibold text-slate-900">{task.task_id}</h3>
+                  <span className="text-[10px] text-slate-500 font-mono-tech">TASK_ID</span>
+                  <h3 className="text-xs font-bold text-slate-200 font-mono-tech select-all">{task.task_id}</h3>
                 </div>
+                
                 <div className="flex flex-wrap gap-2 items-center">
                   <span className={renderStatusBadge(task.status)}>{task.status}</span>
+                  
                   <button
                     type="button"
                     onClick={() => router.push(`/results?task_id=${task.task_id}`)}
-                    className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-slate-950 text-xs font-bold transition"
                   >
-                    استعراض المهمة
+                    استعراض المخطط الجغرافي
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteTask(task.task_id, e)}
+                    className="p-1.5 bg-red-950/30 hover:bg-red-900/60 text-red-400 border border-red-900/20 rounded-xl transition text-xs flex items-center justify-center"
+                    title="مسح السجلات نهائياً"
+                  >
+                    🗑️
                   </button>
                 </div>
               </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl bg-slate-50 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.15em] text-slate-500">التاريخ</p>
-                  <p className="mt-2 text-sm text-slate-700">{new Date(task.created_at).toLocaleString('ar-EG')}</p>
+              
+              <div className="mt-4 grid gap-3 grid-cols-3 text-xs">
+                <div className="rounded-xl bg-slate-950/50 p-2.5 border border-slate-900">
+                  <p className="text-[10px] text-slate-500 font-semibold">تاريخ الإنشاء</p>
+                  <p className="mt-1 text-slate-300 font-mono-tech">{new Date(task.created_at).toLocaleDateString('ar-EG')}</p>
                 </div>
-                <div className="rounded-2xl bg-slate-50 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.15em] text-slate-500">آخر تحديث</p>
-                  <p className="mt-2 text-sm text-slate-700">{new Date(task.updated_at).toLocaleString('ar-EG')}</p>
+                <div className="rounded-xl bg-slate-950/50 p-2.5 border border-slate-900">
+                  <p className="text-[10px] text-slate-500 font-semibold">توقيت المعالجة</p>
+                  <p className="mt-1 text-slate-300 font-mono-tech">{new Date(task.created_at).toLocaleTimeString('ar-EG')}</p>
                 </div>
-                <div className="rounded-2xl bg-slate-50 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.15em] text-slate-500">نوع الصورة</p>
-                  <p className="mt-2 text-sm text-slate-700">{task.metadata?.image_type || '-'}</p>
+                <div className="rounded-xl bg-slate-950/50 p-2.5 border border-slate-900">
+                  <p className="text-[10px] text-slate-500 font-semibold">تصنيف التحليل</p>
+                  <p className="mt-1 text-slate-300">{task.metadata?.image_type === 'kml' ? 'مسار KML' : task.metadata?.image_type === 'geospatial' ? 'GeoTIFF' : 'أبعاد مترية'}</p>
                 </div>
               </div>
             </div>

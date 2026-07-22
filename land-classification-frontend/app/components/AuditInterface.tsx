@@ -294,31 +294,31 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+    <div className="engineering-glass glass-glow-cyan rounded-3xl overflow-hidden relative">
       {/* العنوان */}
-      <div className="p-6 border-b border-gray-200">
-        <h2 className="text-2xl font-semibold text-gray-800">
-          واجهة التدقيق الجغرافي
+      <div className="p-6 border-b border-slate-800">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <span>🔍</span> واجهة التدقيق والمطابقة المساحية الجغرافية
         </h2>
-        <p className="text-gray-600 mt-1">
-          قم بتدقيق وتصحيح نتائج الذكاء الاصطناعي (Human-in-the-Loop)
+        <p className="text-slate-400 text-xs mt-1">
+          قم بتدقيق وتصحيح معالم الذكاء الاصطناعي بنظام الحلقة البشرية المغلقة (Human-in-the-Loop)
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
         {/* الخريطة */}
         <div className="lg:col-span-2">
-          <div className="p-4 border-b border-gray-200 flex flex-wrap justify-between items-center gap-2 bg-slate-50">
+          <div className="p-4 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2 bg-slate-950/40">
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-gray-800">خريطة التدقيق التفاعلية</h3>
-              <span className="px-3 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
-                وضع التدقيق
+              <h3 className="font-semibold text-slate-200 text-xs">خريطة التدقيق التفاعلية</h3>
+              <span className="px-2.5 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded-full text-[10px] font-bold">
+                وضع التدقيق النشط
               </span>
             </div>
             
             <button
               onClick={() => setIsStylePanelOpen(!isStylePanelOpen)}
-              className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg text-xs font-semibold hover:from-blue-700 hover:to-indigo-700 shadow transition flex items-center gap-1 focus:outline-none"
+              className="px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl text-xs font-semibold hover:text-white transition flex items-center gap-1 focus:outline-none"
             >
               <span>🎨 تخصيص المظهر</span>
               <svg className={`w-3 h-3 transform transition-transform ${isStylePanelOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -328,11 +328,11 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
           </div>
           
           {isStylePanelOpen && (
-            <div className="p-4 bg-slate-100 border-b border-gray-200 space-y-4">
+            <div className="p-5 bg-slate-950/70 border-b border-slate-800 space-y-4">
               <div className="flex justify-between items-start">
                 <div>
-                  <h4 className="font-semibold text-xs text-slate-800">🎨 تنسيق ألوان وسماكة خطوط المعالم</h4>
-                  <p className="text-[10px] text-slate-500 mt-0.5">التعديلات تنعكس فوراً على الخريطة. يمكنك حفظها لتعديل الصورة النهائية والـ KML.</p>
+                  <h4 className="font-bold text-xs text-white">🎨 تنسيق ألوان وسماكة خطوط المعالم</h4>
+                  <p className="text-[10px] text-slate-500 mt-0.5">التعديلات تنعكس فوراً على الخريطة. يمكنك حفظها كافتراضي لتعديل الصورة النهائية والـ KML.</p>
                 </div>
               </div>
               
@@ -347,23 +347,23 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                 }).map(([key, item]) => {
                   const cfg = customStyles[key] || { color: "#cccccc", width: 2, dash: "solid", fillOpacity: 0.1 };
                   return (
-                    <div key={key} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2 text-xs">
-                      <div className="font-bold text-slate-700 border-b pb-1 mb-1">{item.label}</div>
+                    <div key={key} className="bg-slate-900 p-3 rounded-xl border border-slate-800 space-y-2 text-[11px]">
+                      <div className="font-bold text-slate-200 border-b border-slate-800 pb-1 mb-1">{item.label}</div>
                       
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] text-slate-500">اللون:</span>
+                        <span className="text-[10px] text-slate-500 font-mono-tech">Color:</span>
                         <input
                           type="color"
                           value={cfg.color}
                           onChange={(e) => updateStyle(key, "color", e.target.value)}
-                          className="w-8 h-6 rounded border cursor-pointer p-0"
+                          className="w-8 h-6 bg-slate-950 rounded border border-slate-850 cursor-pointer p-0"
                         />
                       </div>
-
+ 
                       <div className="space-y-0.5">
                         <div className="flex justify-between text-[10px] text-slate-500">
                           <span>السمك:</span>
-                          <span className="font-bold">{cfg.width}px</span>
+                          <span className="font-bold text-slate-300 font-mono-tech">{cfg.width}px</span>
                         </div>
                         <input
                           type="range"
@@ -371,14 +371,14 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                           max="10"
                           value={cfg.width}
                           onChange={(e) => updateStyle(key, "width", parseInt(e.target.value))}
-                          className="w-full h-1 bg-slate-200 rounded cursor-pointer"
+                          className="w-full h-1 bg-slate-800 rounded cursor-pointer accent-cyan-400"
                         />
                       </div>
-
+ 
                       <div className="space-y-0.5">
                         <div className="flex justify-between text-[10px] text-slate-500">
                           <span>الشفافية:</span>
-                          <span className="font-bold">{Math.round(cfg.fillOpacity * 100)}%</span>
+                          <span className="font-bold text-slate-300 font-mono-tech">{Math.round(cfg.fillOpacity * 100)}%</span>
                         </div>
                         <input
                           type="range"
@@ -387,16 +387,16 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                           step="0.05"
                           value={cfg.fillOpacity}
                           onChange={(e) => updateStyle(key, "fillOpacity", parseFloat(e.target.value))}
-                          className="w-full h-1 bg-slate-200 rounded cursor-pointer"
+                          className="w-full h-1 bg-slate-800 rounded cursor-pointer accent-cyan-400"
                         />
                       </div>
-
+ 
                       <div className="flex justify-between items-center gap-1">
                         <span className="text-[10px] text-slate-500">شكل الخط:</span>
                         <select
                           value={cfg.dash}
                           onChange={(e) => updateStyle(key, "dash", e.target.value)}
-                          className="bg-slate-50 text-slate-700 px-1 py-0.5 rounded text-[10px] focus:outline-none border"
+                          className="bg-slate-950 text-slate-300 px-1 py-0.5 rounded text-[10px] focus:outline-none border border-slate-800"
                         >
                           <option value="solid">مستمر ━</option>
                           <option value="dashed">متقطع ╌</option>
@@ -407,22 +407,22 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                   );
                 })}
               </div>
-
+ 
               {taskId && (
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
                   <button
                     type="button"
                     onClick={handleSaveAsDefault}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg text-xs font-semibold shadow flex items-center gap-1 focus:outline-none"
+                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 rounded-xl text-xs font-semibold flex items-center gap-1 focus:outline-none"
                   >
-                    <span>⭐ حفظ المظهر كافتراضي</span>
+                    <span>⭐ حفظ كافتراضي</span>
                   </button>
                   
                   <button
                     type="button"
                     onClick={handleUpdateProcessedImage}
                     disabled={isUpdatingPreview}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow disabled:opacity-50 flex items-center gap-1 focus:outline-none"
+                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold disabled:opacity-50 flex items-center gap-1 focus:outline-none"
                   >
                     {isUpdatingPreview ? (
                       <>
@@ -431,7 +431,7 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                       </>
                     ) : (
                       <>
-                        <span>💾 تطبيق المظهر وتحديث الصورة المعالجة</span>
+                        <span>💾 تطبيق المظهر وتحديث المعاينة</span>
                       </>
                     )}
                   </button>
@@ -440,7 +440,7 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
             </div>
           )}
           
-          <div className="h-[500px] p-4">
+          <div className="h-[500px] p-4 bg-slate-950/20">
             <MapViewer
               taskId={taskId}
               geojsonData={geojsonData}
@@ -452,102 +452,100 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
               customStyles={customStyles}
             />
           </div>
-
+ 
           {/* تعليمات التدقيق */}
-          <div className="p-4 border-t border-gray-200">
-            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+          <div className="p-4 border-t border-slate-800 bg-slate-950/20">
+            <div className="bg-cyan-950/20 border-r-4 border-cyan-500 p-4 rounded-r-xl">
               <div className="flex">
                 <div className="flex-shrink-0">
-                  <svg className="w-5 h-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                  </svg>
+                  <span className="text-cyan-400">💡</span>
                 </div>
                 <div className="mr-3">
-                  <p className="text-sm text-yellow-700">
-                    <strong>كيفية الاستخدام:</strong> انقر على أي معلم في الخريطة، ثم قم بتصحيح تصنيفه في اللوحة الجانبية. كل تصحيح يساعد النظام على التعلم!
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    <strong>كيفية الاستخدام:</strong> انقر على أي معلم (مضلع) في الخريطة، ثم قم بتصحيح تصنيفه أو إدخال ملاحظات في اللوحة الجانبية. كل تصحيح يساعد النظام على التعلم التلقائي!
                   </p>
                 </div>
               </div>
             </div>
           </div>
         </div>
-
+ 
         {/* لوحة التدقيق الجانبية */}
-        <div className="border-l border-gray-200">
+        <div className="border-r border-slate-800 bg-slate-900/40">
           <div className="p-6 space-y-6">
             {/* إحصائيات */}
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
-              <h4 className="font-semibold text-gray-800 mb-3">📊 إحصائيات التدقيق</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="text-center p-3 bg-white rounded border">
-                  <div className="text-2xl font-bold text-blue-600">{statistics.totalFeatures}</div>
-                  <div className="text-sm text-gray-600">إجمالي المعالم</div>
+            <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+              <h4 className="font-semibold text-white mb-3 text-xs tracking-wider uppercase text-cyan-400">📊 إحصائيات المطابقة والتدقيق</h4>
+              <div className="grid grid-cols-2 gap-3 font-mono-tech">
+                <div className="text-center p-3 bg-slate-900 rounded-xl border border-slate-850">
+                  <div className="text-xl font-bold text-slate-200">{statistics.totalFeatures}</div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">إجمالي المعالم</div>
                 </div>
-                <div className="text-center p-3 bg-white rounded border">
-                  <div className="text-2xl font-bold text-green-600">{statistics.correctedFeatures}</div>
-                  <div className="text-sm text-gray-600">تم تصحيحها</div>
+                <div className="text-center p-3 bg-slate-900 rounded-xl border border-slate-850">
+                  <div className="text-xl font-bold text-emerald-400">{statistics.correctedFeatures}</div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">تم تصحيحها</div>
                 </div>
-                <div className="text-center p-3 bg-white rounded border">
-                  <div className="text-2xl font-bold text-orange-600">{statistics.pendingFeatures}</div>
-                  <div className="text-sm text-gray-600">قيد الانتظار</div>
+                <div className="text-center p-3 bg-slate-900 rounded-xl border border-slate-850">
+                  <div className="text-xl font-bold text-amber-500">{statistics.pendingFeatures}</div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">قيد الانتظار</div>
                 </div>
-                <div className="text-center p-3 bg-white rounded border">
-                  <div className="text-2xl font-bold text-purple-600">{statistics.accuracy.toFixed(1)}%</div>
-                  <div className="text-sm text-gray-600">الدقة</div>
+                <div className="text-center p-3 bg-slate-900 rounded-xl border border-slate-850">
+                  <div className="text-xl font-bold text-cyan-400">{statistics.accuracy.toFixed(1)}%</div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">الدقة المحسوبة</div>
                 </div>
               </div>
             </div>
-
+ 
             {/* تفاصيل المعلم المحدد */}
             {selectedFeature ? (
               <div className="space-y-6">
                 <div>
-                  <h4 className="font-semibold text-gray-800 mb-3">المعلم المحدد</h4>
+                  <h4 className="font-semibold text-slate-200 mb-3 text-xs">المعلم المساحي المحدد</h4>
                   
-                  <div className="p-4 bg-gray-50 rounded-lg mb-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">المساحة:</span>
-                        <span className="font-semibold">{selectedFeature.properties?.area || 'غير معروف'} كم²</span>
+                  <div className="p-4 bg-slate-950/50 rounded-2xl border border-slate-800 mb-4">
+                    <div className="space-y-2 text-xs font-mono-tech">
+                      <div className="flex justify-between border-b border-slate-900 pb-1.5">
+                        <span className="text-slate-500 font-sans">المساحة المحسوبة:</span>
+                        <span className="font-semibold text-slate-200">{selectedFeature.properties?.area || 'غير معروف'} كم²</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">نوع الطبقة:</span>
-                        <span className="font-semibold">
+                      <div className="flex justify-between border-b border-slate-900 pb-1.5">
+                        <span className="text-slate-500 font-sans">نوع الطبقة الأصلية:</span>
+                        <span className="font-semibold text-slate-200">
                           {LAYER_STYLES.agents[selectedFeature.properties?.layer_type as keyof typeof LAYER_STYLES.agents]?.name || 'غير معروف'}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-600">ثقة النموذج:</span>
-                        <span className="font-semibold">
+                        <span className="text-slate-500 font-sans">ثقة نموذج SAM:</span>
+                        <span className="font-semibold text-cyan-400">
                           {((selectedFeature.properties?.confidence || 0) * 100).toFixed(1)}%
                         </span>
                       </div>
                     </div>
                   </div>
-
+ 
                   {/* التصنيف الحالي */}
                   <div className="mb-4">
-                    <label className="block text-gray-700 mb-2 font-medium">التصنيف الحالي</label>
-                    <div className="flex items-center p-3 bg-gray-100 rounded-lg">
+                    <label className="block text-slate-400 mb-2 text-xs">التصنيف الحالي</label>
+                    <div className="flex items-center p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
                       <div 
-                        className="w-6 h-6 rounded mr-3"
+                        className="w-4 h-4 rounded mr-3"
                         style={{ 
                           backgroundColor: LAYER_STYLES.classifications[selectedFeature.properties?.classification as keyof typeof LAYER_STYLES.classifications]?.color || '#cccccc'
                         }}
                       ></div>
-                      <span className="font-semibold">
+                      <span className="font-semibold text-slate-200 text-xs">
                         {LAYER_STYLES.classifications[selectedFeature.properties?.classification as keyof typeof LAYER_STYLES.classifications]?.name || selectedFeature.properties?.classification}
                       </span>
                     </div>
                   </div>
-
+ 
                   {/* التصنيف الجديد */}
                   <div className="mb-4">
-                    <label className="block text-gray-700 mb-2 font-medium">التصنيف الجديد</label>
+                    <label className="block text-slate-400 mb-2 text-xs">التصنيف الجديد المقترح</label>
                     <select
                       value={newClassification}
                       onChange={(e) => setNewClassification(e.target.value)}
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className="w-full p-3 bg-slate-900 border border-slate-800 text-slate-200 rounded-xl focus:outline-none focus:border-cyan-500 transition text-xs"
                     >
                       <option value="">اختر تصنيفاً جديداً</option>
                       {classificationOptions.map((option) => (
@@ -558,97 +556,95 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
                     </select>
                     
                     {newClassification && (
-                      <div className="mt-2 flex items-center">
+                      <div className="mt-3 flex items-center gap-2">
                         <div 
-                          className="w-6 h-6 rounded mr-2"
+                          className="w-4 h-4 rounded"
                           style={{ 
                             backgroundColor: LAYER_STYLES.classifications[newClassification as keyof typeof LAYER_STYLES.classifications]?.color || '#cccccc'
                           }}
                         ></div>
-                        <span className="text-sm text-gray-600">
-                          سيتم تغيير التصنيف إلى: {LAYER_STYLES.classifications[newClassification as keyof typeof LAYER_STYLES.classifications]?.name}
+                        <span className="text-[10px] text-slate-400">
+                          سيتم التوجيه للطبقة: {LAYER_STYLES.classifications[newClassification as keyof typeof LAYER_STYLES.classifications]?.name}
                         </span>
                       </div>
                     )}
                   </div>
-
+ 
                   {/* الملاحظات */}
                   <div className="mb-6">
-                    <label className="block text-gray-700 mb-2 font-medium">ملاحظات (اختياري)</label>
+                    <label className="block text-slate-400 mb-2 text-xs">ملاحظات مساحية (مترية)</label>
                     <textarea
                       value={comment}
                       onChange={(e) => setComment(e.target.value)}
-                      placeholder="أضف ملاحظاتك هنا لمساعدة النظام على التعلم..."
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent min-h-[100px]"
+                      placeholder="أضف ملاحظات التثمين والتربة هنا لمساعدة النموذج على التعلم..."
+                      className="w-full p-3 bg-slate-900 border border-slate-800 text-slate-200 rounded-xl focus:outline-none focus:border-cyan-500 transition text-xs min-h-[100px]"
                     ></textarea>
                   </div>
-
+ 
                   {/* زر الحفظ */}
                   <button
                     onClick={handleSaveCorrection}
                     disabled={isSaving || !newClassification}
-                    className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all ${
+                    className={`w-full py-3 px-6 rounded-xl font-bold text-xs transition disabled:opacity-50 disabled:cursor-not-allowed ${
                       isSaving || !newClassification
-                        ? 'bg-gray-400 cursor-not-allowed'
-                        : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg hover:shadow-xl'
+                        ? 'bg-slate-800 text-slate-600 border border-slate-850'
+                        : 'bg-cyan-600 hover:bg-cyan-500 text-white'
                     }`}
                   >
                     {isSaving ? (
                       <span className="flex items-center justify-center">
-                        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white mr-3"></div>
+                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-3"></div>
                         جاري الحفظ...
                       </span>
                     ) : (
-                      '💾 حفظ التصحيح'
+                      '💾 حفظ وتأكيد التصحيح المساحي'
                     )}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="text-center py-12">
-                <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 7m0 10V7" />
-                </svg>
-                <h4 className="font-semibold text-gray-800 mb-2">اختر معلماً للتدقيق</h4>
-                <p className="text-gray-600 text-sm">
-                  انقر على أي معلم في الخريطة لبدء عملية التدقيق والتصحيح
+              <div className="text-center py-12 border-2 border-dashed border-slate-800 rounded-2xl bg-slate-950/20">
+                <span className="text-3xl block mb-3 text-slate-600">🗺️</span>
+                <h4 className="font-semibold text-slate-300 mb-1.5 text-xs">اختر معلماً للتدقيق</h4>
+                <p className="text-slate-500 text-[10px] leading-relaxed px-4">
+                  انقر على أي مضلع مساحي في الخريطة لبدء عملية المطابقة وتثمين التربة وتعديل الحدود.
                 </p>
               </div>
             )}
-
+ 
             {/* تصدير التصحيحات */}
             {corrections.length > 0 && (
-              <div className="pt-6 border-t border-gray-200">
+              <div className="pt-6 border-t border-slate-800">
                 <button
                   onClick={exportCorrections}
-                  className="w-full py-3 px-6 bg-gradient-to-r from-green-500 to-blue-500 text-white rounded-lg font-semibold hover:from-green-600 hover:to-blue-600 transition-all shadow-lg"
+                  className="w-full py-3 px-6 bg-slate-900 hover:bg-slate-800 text-cyan-400 border border-cyan-800/40 rounded-xl font-bold text-xs transition-all shadow"
                 >
-                  📥 تصدير التصحيحات لإعادة التدريب ({corrections.length})
+                  📥 تصدير ملف التصحيحات المحدثة ({corrections.length})
                 </button>
-                <p className="text-center text-xs text-gray-500 mt-2">
-                  ⚡ التصحيحات ستستخدم لتحسين دقة وكيل الأراضي (Human-in-the-Loop)
+                <p className="text-center text-[10px] text-slate-500 mt-2">
+                  ⚡ سيتم إلحاق هذه البيانات لتدريب شبكة الوكلاء في المعالجة القادمة.
                 </p>
               </div>
             )}
           </div>
         </div>
       </div>
-
+ 
       {/* تذييل معلومات النظام */}
-      <div className="p-6 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-blue-50">
-        <h4 className="font-semibold text-gray-800 mb-3">🤖 نظام حلقة التدقيق البشري (Human-in-the-Loop)</h4>
+      <div className="p-6 border-t border-slate-800 bg-slate-950/40">
+        <h4 className="font-bold text-white mb-3 text-xs">🤖 نظام حلقة التدقيق البشري المغلقة (Human-in-the-Loop)</h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-3 bg-white rounded border">
-            <h5 className="font-semibold text-blue-700 mb-1">التدقيق</h5>
-            <p className="text-sm text-gray-600">المستخدم يصحح أخطاء الوكيل عبر واجهة سهلة</p>
+          <div className="p-3.5 bg-slate-900 border border-slate-850 rounded-xl">
+            <h5 className="font-bold text-cyan-400 mb-1 text-xs">الخطوة 1: التدقيق البشري</h5>
+            <p className="text-[10px] text-slate-400 leading-relaxed">يقوم المساح بتدقيق الأبعاد والحدود المنقوصة وتعديل التصنيفات غير الدقيقة.</p>
           </div>
-          <div className="p-3 bg-white rounded border">
-            <h5 className="font-semibold text-green-700 mb-1">التعلم</h5>
-            <p className="text-sm text-gray-600">التصحيحات تُخزن في قاعدة بيانات للتدريب</p>
+          <div className="p-3.5 bg-slate-900 border border-slate-850 rounded-xl">
+            <h5 className="font-bold text-emerald-400 mb-1 text-xs">الخطوة 2: الحفظ السحابي</h5>
+            <p className="text-[10px] text-slate-400 leading-relaxed">تُحفظ كافة التصحيحات في قاعدة بيانات الذاكرة المشتركة للوكلاء.</p>
           </div>
-          <div className="p-3 bg-white rounded border">
-            <h5 className="font-semibold text-purple-700 mb-1">التحسين</h5>
-            <p className="text-sm text-gray-600">النموذج يُعاد تدريبه ليصبح أكثر دقة</p>
+          <div className="p-3.5 bg-slate-900 border border-slate-850 rounded-xl">
+            <h5 className="font-bold text-amber-500 mb-1 text-xs">الخطوة 3: التوجيه وإعادة التدريب</h5>
+            <p className="text-[10px] text-slate-400 leading-relaxed">يستخدم النظام البيانات لتعلم أنماط الجرب والمباني الجبلية وزيادة الدقة تلقائياً.</p>
           </div>
         </div>
       </div>

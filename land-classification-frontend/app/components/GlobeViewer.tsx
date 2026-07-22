@@ -115,6 +115,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
   const [selectedProvider, setSelectedProvider] = useState<string>('google');
   const [selectedLayer, setSelectedLayer] = useState<string>(NASA_GIBS_DEFAULT_LAYER);
   const [tileZoom, setTileZoom] = useState<number>(17);
+  const [selectedFormat, setSelectedFormat] = useState<string>('geojson');
 
   // UI states
   const [statusMessage, setStatusMessage] = useState<string>("جاري تحميل الكرة الأرضية...");
@@ -754,25 +755,16 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
             const stData = await stRes.json();
             if (stData.status === 'COMPLETED') {
               clearInterval(pollInterval);
-              setStatusMessage('اكتمل التحليل، جاري تحميل GeoJSON...');
-              const repRes = await fetch(`${base}/tasks/${taskId}/report`);
-              const repData = await repRes.json();
-              
-              if (repData.geojson) {
-                const blob = new Blob([JSON.stringify(repData.geojson)], { type: 'application/geo+json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `analysis_${taskId}.geojson`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                setStatusMessage('');
-              } else {
-                 setStatusMessage('لم يتم العثور على مضلعات.');
-                 setTimeout(() => setStatusMessage(''), 3000);
-              }
+              setStatusMessage('اكتمل التحليل الجغرافي بنجاح، جاري استخراج وتنزيل الملف...');
+              const downloadUrl = `${base}/tasks/${taskId}/export?format=${selectedFormat}`;
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.download = `analysis_${taskId}.${selectedFormat}`;
+              a.target = '_blank';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setStatusMessage('');
             } else if (stData.status === 'FAILED') {
               clearInterval(pollInterval);
               setStatusMessage('فشل التحليل الذكي.');
@@ -1429,7 +1421,7 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                           } else {
                             cancelSelection();
                             setSelecting(true);
-                            setActiveTab(null); // Close sidebar for easier drawing
+                            setActiveTab(null);
                           }
                         }}
                         className={`w-full py-2.5 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all shadow-lg ${selecting
@@ -1472,25 +1464,43 @@ export default function GlobeViewer({ taskId }: { taskId?: string }) {
                         <div className="text-right text-xs text-emerald-500/80 font-mono">Zoom: {tileZoom}</div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={saveSelectionAsTiff}
-                          className="col-span-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
-                        >
-                          <Download className="w-4 h-4" /> حفظ كـصورة TIFF
-                        </button>
-                        <button
-                          onClick={analyzeSelectionGeoJSON}
-                          className="col-span-2 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
-                        >
-                          <Download className="w-4 h-4" /> تحليل ذكي (بيوت/طرق/أراضي) بصيغة GeoJSON
-                        </button>
-                        <button
-                          onClick={cancelSelection}
-                          className="col-span-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium transition-colors"
-                        >
-                          إعادة رسم
-                        </button>
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-slate-400 font-semibold tracking-wider block">📁 صيغة تصدير واستخراج التحليل الجغرافي</label>
+                          <select
+                            value={selectedFormat}
+                            onChange={(e) => setSelectedFormat(e.target.value)}
+                            className="w-full p-2.5 bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-xl focus:outline-none focus:border-cyan-500 transition"
+                          >
+                            <option value="geojson">GeoJSON (.geojson)</option>
+                            <option value="dxf">AutoCAD Drawing (.dxf)</option>
+                            <option value="kml">Google Earth (.kml)</option>
+                            <option value="kmz">Google Earth Compressed (.kmz)</option>
+                            <option value="shp">Shapefile Folder (.zip)</option>
+                            <option value="csv">Coordinates Sheet (.csv)</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={saveSelectionAsTiff}
+                            className="col-span-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                          >
+                            <Download className="w-4 h-4" /> حفظ الصورة كـ TIFF
+                          </button>
+                          <button
+                            onClick={analyzeSelectionGeoJSON}
+                            className="col-span-2 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/20"
+                          >
+                            🚀 تشغيل التحليل الذكي وتنزيل النتيجة
+                          </button>
+                          <button
+                            onClick={cancelSelection}
+                            className="col-span-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium transition-colors"
+                          >
+                            إعادة رسم المنطقة
+                          </button>
+                        </div>
                       </div>
 
                       {exportLink && (

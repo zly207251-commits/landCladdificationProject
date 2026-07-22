@@ -101,6 +101,20 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
     setShowLogs((prev) => !prev);
   };
 
+  const handleDeleteTask = async () => {
+    if (!window.confirm("هل أنت متأكد من مسح كافة البيانات والمخططات المساحية لهذه المهمة نهائياً من الخادم؟")) return;
+    try {
+      const resp = await fetch(`${API_CONFIG.baseURL}/tasks/${taskId}`, {
+        method: 'DELETE'
+      });
+      if (!resp.ok) throw new Error("فشل الحذف من الخادم");
+      alert("تم مسح المهمة بنجاح.");
+      router.push("/");
+    } catch (e: any) {
+      alert("خطأ أثناء المسح: " + e.message);
+    }
+  };
+
   const imageSrc = report?.image_url ? `${API_CONFIG.baseURL}${report.image_url}` : null;
   const processedImageSrc = report?.processed_image_url ? `${API_CONFIG.baseURL}${report.processed_image_url}` : null;
   const globeViewerLink = report?.task_id ? `/globe?task_id=${report.task_id}` : null;
@@ -239,46 +253,73 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
     }
   ];
 
-  return (
-    <div>
-      <h1 className="text-2xl font-bold text-gray-800 mb-4">نتائج المهمة</h1>
+  const getAgentMessageCardStyles = (agentName?: string) => {
+    if (!agentName) return "bg-slate-950/40 border-slate-850 text-slate-300";
+    const name = agentName.toUpperCase();
+    if (name.includes("COORDINATOR") || name.includes("ORCHESTRATOR")) return "bg-slate-950/40 border-blue-900/30 text-blue-300";
+    if (name.includes("PROJECTION")) return "bg-slate-950/40 border-emerald-900/30 text-emerald-300";
+    if (name.includes("LAND")) return "bg-slate-950/40 border-red-900/30 text-red-300";
+    return "bg-slate-950/40 border-purple-900/30 text-purple-300";
+  };
 
-      {loading && <p className="text-sm text-gray-600">جاري جلب التقرير...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div>
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <span>📋</span> تقرير القياس والمطابقة المساحية
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">تفاصيل نتائج التشخيص الجغرافي وحساب المساحات للأراضي.</p>
+        </div>
+        
+        <Link href="/" className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-semibold text-slate-300">
+          العينة التوجيهية الرئيسية 🏠
+        </Link>
+      </div>
+
+      {loading && (
+        <div className="py-12 text-center text-xs text-slate-400 font-mono-tech">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-400 mx-auto mb-3"></div>
+          Generating geospatial survey report...
+        </div>
+      )}
+      
+      {error && <div className="p-4 bg-red-950/20 border border-red-800/30 text-red-400 text-xs rounded-2xl">{error}</div>}
 
       {report && (
         <div className="space-y-8">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="font-semibold text-lg mb-4">معلومات المهمة</h3>
+          {/* معلومات المهمة */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl">
+            <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-2">🌐 تفاصيل ومعايير الإسقاط</h3>
             <div className="overflow-x-auto">
-              <table className="min-w-full text-right text-sm text-gray-700">
+              <table className="min-w-full text-right text-xs text-slate-300 font-mono-tech">
                 <tbody>
-                  <tr className="border-b">
-                    <th className="py-3 px-4 font-medium text-gray-900">معرف المهمة</th>
-                    <td className="py-3 px-4">{report.task_id}</td>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right w-1/3">معرف المهمة (TASK_ID)</th>
+                    <td className="py-3 px-4 select-all text-white">{report.task_id}</td>
                   </tr>
-                  <tr className="border-b bg-gray-50">
-                    <th className="py-3 px-4 font-medium text-gray-900">الحالة</th>
-                    <td className="py-3 px-4">{report.status}</td>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">حالة المعالجة</th>
+                    <td className="py-3 px-4 text-cyan-400 font-bold">{report.status}</td>
                   </tr>
-                  <tr className="border-b">
-                    <th className="py-3 px-4 font-medium text-gray-900">تاريخ الإنشاء</th>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">تاريخ المعالجة</th>
                     <td className="py-3 px-4">{formatDate(report.created_at)}</td>
                   </tr>
-                  <tr className="border-b bg-gray-50">
-                    <th className="py-3 px-4 font-medium text-gray-900">آخر تحديث</th>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">آخر تحديث للسجلات</th>
                     <td className="py-3 px-4">{formatDate(report.updated_at)}</td>
                   </tr>
-                  <tr className="border-b">
-                    <th className="py-3 px-4 font-medium text-gray-900">مقياس البكسل</th>
-                    <td className="py-3 px-4">{report.metadata?.pixel_scale_meters ?? '-'}</td>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">دقة البكسل المترية</th>
+                    <td className="py-3 px-4">{report.metadata?.pixel_scale_meters ?? '-'} م/بكسل</td>
                   </tr>
-                  <tr className="border-b bg-gray-50">
-                    <th className="py-3 px-4 font-medium text-gray-900">خط العرض المرجعي</th>
+                  <tr className="border-b border-slate-800/60">
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">Latitude Center</th>
                     <td className="py-3 px-4">{report.metadata?.ref_latitude ?? '-'}</td>
                   </tr>
                   <tr>
-                    <th className="py-3 px-4 font-medium text-gray-900">خط الطول المرجعي</th>
+                    <th className="py-3 px-4 font-semibold text-slate-400 text-right">Longitude Center</th>
                     <td className="py-3 px-4">{report.metadata?.ref_longitude ?? '-'}</td>
                   </tr>
                 </tbody>
@@ -286,83 +327,96 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="font-semibold text-lg mb-4">سير عمل الوكلاء</h3>
-            <div className="grid gap-4 sm:grid-cols-3">
+          {/* سير عمل وكلاء الذكاء الاصطناعي */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl">
+            <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-2">🤖 هيكلية وسير عمل فريق الوكلاء</h3>
+            <div className="grid gap-4 sm:grid-cols-3 text-xs">
               {agentSteps.map((agent) => (
-                <div key={agent.id} className={`rounded-2xl border border-gray-200 p-4 ${agent.color}`}>
-                  <h4 className="font-semibold text-base mb-2">{agent.title}</h4>
-                  <p className="text-sm text-gray-700">{agent.description}</p>
+                <div key={agent.id} className="rounded-2xl border border-slate-850 p-4 bg-slate-950/40">
+                  <h4 className="font-bold text-slate-200 mb-2 text-xs flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                    {agent.title}
+                  </h4>
+                  <p className="text-slate-400 leading-relaxed">{agent.description}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="font-semibold text-lg">سجل الوكلاء</h3>
-              <div className="flex flex-wrap gap-3">
+          {/* سجل ورسائل الوكلاء */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-4">
+              <h3 className="font-bold text-slate-200 text-sm">💬 سجل اتصالات الوكلاء المساحين</h3>
+              <div className="flex flex-wrap gap-2">
                 {(imageSrc || processedImageSrc) && (
                   <button
                     type="button"
                     onClick={() => router.push(`/results/images?task_id=${taskId}`)}
-                    className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
+                    className="px-3 py-1.5 rounded-xl border border-slate-800 text-slate-300 hover:text-white transition text-xs font-semibold"
                   >
-                    عرض الصور في صفحة منفصلة
+                    🖼️ معاينة الخرائط والصور
                   </button>
                 )}
                 {globeViewerLink && (
                   <a
                     href={globeViewerLink}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                    className="px-3 py-1.5 rounded-xl bg-cyan-950/40 border border-cyan-800/40 text-cyan-300 hover:bg-cyan-950/60 transition text-xs font-semibold"
                   >
-                    عرض المهمة في Globe
+                    🛰️ فتح عارض الـ Globe ثلاثي الأبعاد
                   </a>
                 )}
                 <button
                   type="button"
                   onClick={fetchReport}
-                  className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white transition text-xs font-semibold"
                 >
-                  تحديث التقرير
+                  🔄 تحديث
                 </button>
                 <button
                   type="button"
                   onClick={toggleLogs}
-                  className="rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white transition text-xs font-semibold"
                 >
-                  {showLogs ? 'إخفاء رسائل المهمة' : 'عرض رسائل ووكلاء المهمة'}
+                  {showLogs ? '🙈 إخفاء المحادثات' : '💬 عرض المحادثات'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteTask}
+                  className="px-3 py-1.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-900/30 text-red-400 hover:text-red-300 transition text-xs font-bold"
+                >
+                  🗑️ حذف المهمة
                 </button>
               </div>
             </div>
 
             {showLogs && (
-              <div className="mt-4 space-y-3">
-                {logsLoading && <p className="text-sm text-gray-600">جاري جلب سجل الوكلاء...</p>}
-                {logsError && <p className="text-sm text-red-600">{logsError}</p>}
+              <div className="mt-4 space-y-4 max-h-[500px] overflow-y-auto pr-1">
+                {logsLoading && <div className="text-center text-xs text-slate-500 font-mono-tech">Loading swarm messages...</div>}
+                {logsError && <p className="text-xs text-red-400">{logsError}</p>}
                 {!logsLoading && !logsError && taskLogs.length === 0 && (
-                  <p className="text-sm text-gray-500">لا توجد رسائل سجل متاحة بعد.</p>
+                  <p className="text-xs text-slate-500 text-center py-4">لم تتبادل شبكة الوكلاء أي رسائل خارجية بعد.</p>
                 )}
                 {!logsLoading && taskLogs.length > 0 && (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {taskLogs.map((log, idx) => (
-                      <div key={idx} className={`rounded-2xl border p-4 ${getAgentCardClasses(log.agent)}`}>
-                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start">
+                      <div key={idx} className={`rounded-2xl border p-4 ${getAgentMessageCardStyles(log.agent)}`}>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start border-b border-slate-900 pb-2">
                           <div>
-                            <div className="text-sm font-semibold text-gray-900">{getAgentLabel(log.agent)}</div>
-                            <div className="text-xs text-gray-500">{(log.type || '').toUpperCase()}</div>
+                            <div className="text-xs font-bold text-white">{getAgentLabel(log.agent)}</div>
+                            <div className="text-[10px] text-slate-500 font-mono-tech mt-0.5">{(log.type || '').toUpperCase()}</div>
                           </div>
-                          <span className="text-xs text-gray-500">{formatDate(log.timestamp || log.created_at)}</span>
+                          <span className="text-[10px] text-slate-500 font-mono-tech">{formatDate(log.timestamp || log.created_at)}</span>
                         </div>
-                        <p className="mt-3 text-sm text-gray-700 whitespace-pre-line">{log.content || log.message || 'بدون محتوى'}</p>
+                        <p className="mt-3 text-xs text-slate-300 leading-relaxed whitespace-pre-line font-sans">{log.content || log.message || 'بدون محتوى'}</p>
+                        
                         {log.data && typeof log.data === 'object' && Object.keys(log.data).length > 0 && (
-                          <div className="mt-3 rounded-xl bg-white border border-gray-200 p-3">
-                            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">تفاصيل إضافية</div>
+                          <div className="mt-3 rounded-xl bg-slate-950/60 border border-slate-900 p-3">
+                            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-2">معلومات الإسقاط الهندسية</div>
                             <div className="grid gap-2 sm:grid-cols-2">
                               {Object.entries(log.data).map(([key, value]) => (
-                                <div key={key} className="rounded-lg bg-gray-100 p-2">
-                                  <div className="text-[11px] font-semibold text-gray-600">{key}</div>
-                                  <div className="mt-1 text-sm text-gray-800 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
+                                <div key={key} className="rounded-lg bg-slate-900/60 border border-slate-900 p-2 font-mono-tech text-[10px]">
+                                  <div className="text-slate-500 font-semibold">{key}</div>
+                                  <div className="mt-1 text-slate-300 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
                                 </div>
                               ))}
                             </div>
@@ -376,28 +430,29 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             )}
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="font-semibold text-lg mb-4">ملخص الطبقات ({report.layers?.length ?? 0})</h3>
+          {/* ملخص طبقات الأراضي */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl">
+            <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-2">📊 ملخص وتثمين المساحات حسب الطبقات ({report.layers?.length ?? 0})</h3>
             <div className="overflow-x-auto">
-              <table className="min-w-full text-right text-sm text-gray-700">
-                <thead className="bg-gray-100 text-gray-900">
+              <table className="min-w-full text-right text-xs text-slate-300 font-mono-tech">
+                <thead className="bg-slate-950/50 text-slate-200 border-b border-slate-800 font-semibold">
                   <tr>
-                    <th className="py-3 px-4">الطبقة</th>
-                    <th className="py-3 px-4">المساحة (م²)</th>
-                    <th className="py-3 px-4">تفاصيل المساحة</th>
-                    <th className="py-3 px-4">عدد المضلعات</th>
-                    <th className="py-3 px-4">الوصف</th>
-                    <th className="py-3 px-4">التصنيف المحلي</th>
+                    <th className="py-3 px-4 text-right">اسم الطبقة الهندسية</th>
+                    <th className="py-3 px-4 text-right">المساحة (متر مربع)</th>
+                    <th className="py-3 px-4 text-right">المساحة (فدان/قيراط/سهم)</th>
+                    <th className="py-3 px-4 text-right">عدد المضلعات</th>
+                    <th className="py-3 px-4 text-right">الوصف والتحليل المترولوجي</th>
+                    <th className="py-3 px-4 text-right">توجيه التثمين المحلي</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-850">
                   {report.layers?.map((ly: any, idx: number) => (
-                    <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                      <td className="py-3 px-4 font-medium text-gray-900">{ly.layer_name}</td>
-                      <td className="py-3 px-4">{ly.area_sq_meters ?? '-'}</td>
-                      <td className="py-3 px-4">{ly.area_agricultural ?? '-'}</td>
+                    <tr key={idx} className="hover:bg-slate-950/20 transition">
+                      <td className="py-3 px-4 font-bold text-white">{ly.layer_name}</td>
+                      <td className="py-3 px-4">{ly.area_sq_meters ?? '-'} م²</td>
+                      <td className="py-3 px-4 text-cyan-400">{ly.area_agricultural ?? '-'}</td>
                       <td className="py-3 px-4">{ly.polygons_count ?? '-'}</td>
-                      <td className="py-3 px-4">{ly.description || '-'}</td>
+                      <td className="py-3 px-4 text-slate-400 leading-relaxed font-sans">{ly.description || '-'}</td>
                       <td className="py-3 px-4">{renderLocalClassification(ly.local_classification)}</td>
                     </tr>
                   ))}
@@ -406,32 +461,35 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="font-semibold text-lg mb-4">أدوات التصدير والتدقيق للمهمة السابقة</h3>
-            <div className="grid gap-6">
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
-                <h4 className="font-semibold mb-3">تدقيق المهمة</h4>
-                <AuditInterface
-                  taskId={report.task_id}
-                  initialFeatures={taskFeatures}
-                  center={report.map_center ?? null}
-                  zoom={report.map_zoom ?? null}
-                  onSaveCorrections={(corrections) => {
-                    console.log('Saved corrections for previous task:', corrections);
-                  }}
-                />
-              </div>
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
-                <h4 className="font-semibold mb-3">تصدير المهمة</h4>
-                <ExportCenter
-                  jobId={report.task_id}
-                  availableLayers={availableLayerNames}
-                  reportData={report}
-                  onExport={() => {
-                    // يمكن توسيع السلوك لاحقًا
-                  }}
-                />
-              </div>
+          {/* لوحة التدقيق والتصدير الجغرافي */}
+          <div className="grid gap-6">
+            <div className="engineering-glass p-6 rounded-3xl">
+              <h4 className="font-bold text-white text-sm mb-4 border-b border-slate-800 pb-2 flex items-center gap-1.5">
+                <span>🔍</span> تدقيق ومطابقة مضلعات المهمة المساحية
+              </h4>
+              <AuditInterface
+                taskId={report.task_id}
+                initialFeatures={taskFeatures}
+                center={report.map_center ?? null}
+                zoom={report.map_zoom ?? null}
+                onSaveCorrections={(corrections) => {
+                  console.log('Saved corrections for previous task:', corrections);
+                }}
+              />
+            </div>
+            
+            <div className="engineering-glass p-6 rounded-3xl">
+              <h4 className="font-bold text-white text-sm mb-4 border-b border-slate-800 pb-2 flex items-center gap-1.5">
+                <span>📥</span> استخراج وتصدير المخطط بصيغ هندسية متعددة
+              </h4>
+              <ExportCenter
+                jobId={report.task_id}
+                availableLayers={availableLayerNames}
+                reportData={report}
+                onExport={() => {
+                  // Extended behavior if needed
+                }}
+              />
             </div>
           </div>
 
