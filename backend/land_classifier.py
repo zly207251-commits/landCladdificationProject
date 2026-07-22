@@ -240,10 +240,10 @@ class LandSegmenterSAM:
         if h < 50 or w < 50:
             raise ValueError("Invalid image: too small for reliable segmentation")
 
-        # فحص السطوع للتأكد من أن الصورة صالحة
+        # فحص السطوع للتأكد من أن الصورة صالحة (فقط إذا كانت سوداء تماماً أو بيضاء تماماً بنسبة 100%)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         mean_brightness = float(np.mean(gray))
-        if mean_brightness < 5 or mean_brightness > 250:
+        if mean_brightness < 0.01 or mean_brightness > 254.99:
             raise ValueError(f"Invalid image: mean brightness={mean_brightness:.2f}")
 
         # التحقق إذا كانت الصورة كبيرة وتحتاج إلى المعالجة عبر البلاطات (Tiles)

@@ -113,6 +113,13 @@ class ProjectionAgent(BaseAgent):
                 print(f"[ProjectionAgent] Error loading image with rasterio: {e}")
                 image = None
 
+        # إذا قُرئت الصورة عبر rasterio ولكنها كانت فارغة/سوداء تماماً، نتجاهلها ونستخدم OpenCV كخيار بديل آمن
+        if image is not None:
+            gray_check = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+            if float(np.mean(gray_check)) < 0.01:
+                print("[ProjectionAgent] WARNING: rasterio loaded an empty/black image. Falling back to OpenCV...")
+                image = None
+
         if image is None:
             try:
                 image = cv2.imread(image_path, cv2.IMREAD_COLOR)
