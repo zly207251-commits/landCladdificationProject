@@ -8,7 +8,7 @@ import { API_CONFIG } from "@/app/lib/map-config";
 export default function HudNavigation() {
   const pathname = usePathname();
   const [serverOnline, setServerOnline] = useState<boolean>(true);
-  const [isLightMode, setIsLightMode] = useState<boolean>(false);
+  const [isLightMode, setIsLightMode] = useState<boolean>(true);
 
   // التحقق من حالة الخادم دورياً
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function HudNavigation() {
 
   // استعادة السمة وحجم الخط والسماكة المحفوظة عند تحميل أي صفحة
   useEffect(() => {
-    const savedTheme = localStorage.getItem("app_theme") || "autocad";
+    const savedTheme = localStorage.getItem("app_theme") || "parchment";
     document.documentElement.setAttribute("data-theme", savedTheme);
     setIsLightMode(savedTheme === "parchment");
 

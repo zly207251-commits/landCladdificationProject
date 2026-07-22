@@ -241,12 +241,98 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
       setComment('');
       setIsSaving(false);
 
-      if (onSaveCorrections) {
-        onSaveCorrections([...corrections, correction]);
-      }
+  };
 
-      alert('✅ تم حفظ التصحيح بنجاح!');
-    }, 500);
+  // حساب المساحة التقريبية للمضلع بالمتر المربع من الإحداثيات الجغرافية
+  const calculateAreaSqM = (coords: any[]) => {
+    if (!coords || coords.length < 3) return 0;
+    let area = 0;
+    const r = 6378137; // نصف قطر الأرض بالمتر
+    
+    // تحويل خطوط الطول والعرض إلى راديان وإسقاط مسطح تقريبي
+    const proj = coords.map(c => {
+      const lon = c[0] * Math.PI / 180;
+      const lat = c[1] * Math.PI / 180;
+      return {
+        x: r * lon * Math.cos(lat),
+        y: r * lat
+      };
+    });
+
+    for (let i = 0; i < proj.length; i++) {
+      const j = (i + 1) % proj.length;
+      area += proj[i].x * proj[j].y;
+      area -= proj[j].x * proj[i].y;
+    }
+    return Math.abs(area / 2);
+  };
+
+  // معالجة التعديل اليدوي للمضلع من الخريطة
+  const handlePolygonEdit = (featureId: string, newGeometry: any) => {
+    const updatedFeatures = features.map(f => {
+      const targetId = f.id || f.properties?.id;
+      if (targetId === featureId) {
+        let areaSqM = 0;
+        const coords = newGeometry.coordinates[0];
+        if (coords && coords.length > 2) {
+          areaSqM = calculateAreaSqM(coords);
+        }
+        const areaSqKm = areaSqM / 1000000;
+
+        // تحديث المعلم المحدد حالياً إذا كان هو نفسه الذي تم تعديله
+        if (selectedFeature && (selectedFeature.id === featureId || selectedFeature.properties?.id === featureId)) {
+          setSelectedFeature((prev: any) => ({
+            ...prev,
+            geometry: newGeometry,
+            properties: {
+              ...prev.properties,
+              area: parseFloat(areaSqKm.toFixed(4))
+            }
+          }));
+        }
+
+        return {
+          ...f,
+          geometry: newGeometry,
+          properties: {
+            ...f.properties,
+            area: parseFloat(areaSqKm.toFixed(4)),
+            corrected: true,
+            correctionDate: new Date().toISOString()
+          }
+        };
+      }
+      return f;
+    });
+
+    setFeatures(updatedFeatures);
+
+    // إضافة التعديل الجغرافي لقائمة التصحيحات
+    const newCorrection = {
+      featureId,
+      originalClassification: features.find(f => (f.id || f.properties?.id) === featureId)?.properties?.classification,
+      newClassification: features.find(f => (f.id || f.properties?.id) === featureId)?.properties?.classification,
+      geometry: newGeometry,
+      comment: 'تعديل يدوي للحدود المساحية عبر الخريطة',
+      timestamp: new Date().toISOString(),
+      reviewedBy: 'user'
+    };
+
+    setCorrections(prev => {
+      const filtered = prev.filter(c => c.featureId !== featureId);
+      return [...filtered, newCorrection];
+    });
+
+    // تحديث الإحصائيات إذا لم يكن قد تم تصحيحه من قبل
+    const wasCorrected = features.find(f => (f.id || f.properties?.id) === featureId)?.properties?.corrected;
+    if (!wasCorrected) {
+      setStatistics(prev => ({
+        ...prev,
+        correctedFeatures: prev.correctedFeatures + 1,
+        pendingFeatures: prev.totalFeatures - (prev.correctedFeatures + 1),
+        accuracy: ((prev.correctedFeatures + 1) / prev.totalFeatures) * 100
+      }));
+    }
   };
 
   // تصدير التصحيحات للتدريب
@@ -450,6 +536,7 @@ export default function AuditInterface({ taskId, initialFeatures = [], onSaveCor
               center={center}
               zoom={zoom}
               customStyles={customStyles}
+              onPolygonEdit={handlePolygonEdit}
             />
           </div>
  

@@ -5,6 +5,8 @@ import { useMap } from 'react-leaflet';
 import { MapContainer, TileLayer, LayersControl, GeoJSON, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import '@geoman-io/leaflet-geoman-free';
+import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import { API_CONFIG, MAP_CONFIG, LAYER_STYLES } from '@/app/lib/map-config';
 
 // إصلاح أيقونات Leaflet - استخدام SVG مدمج
@@ -40,6 +42,7 @@ interface MapViewerProps {
   center?: [number, number] | null;
   zoom?: number | null;
   customStyles?: any;
+  onPolygonEdit?: (featureId: string, newGeometry: any) => void;
 }
 
 export default function MapViewer({ 
@@ -51,7 +54,8 @@ export default function MapViewer({
   useDefaultIcon = true,
   center = null,
   zoom = null,
-  customStyles
+  customStyles,
+  onPolygonEdit
 }: MapViewerProps) {
   const [map, setMap] = useState<L.Map | null>(null);
   const [selecting, setSelecting] = useState<boolean>(false);
@@ -256,6 +260,24 @@ export default function MapViewer({
     map.on('mousemove', onMouseMove as any);
     map.on('mouseup', onMouseUp as any);
 
+    // تهيئة أداة Geoman للتعديل الجغرافي
+    map.pm.addControls({
+      position: 'topleft',
+      drawMarker: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
+      drawRectangle: false,
+      drawCircle: false,
+      drawPolygon: false,
+      editMode: true,
+      dragMode: true,
+      cutPolygon: false,
+      removalMode: true,
+    });
+    
+    // تعريب النصوص لتجربة مستخدم ممتازة
+    map.pm.setLang('ar');
+
     return () => {
       map.off('mousedown', onMouseDown as any);
       map.off('mousemove', onMouseMove as any);
@@ -412,7 +434,14 @@ export default function MapViewer({
 
     const onEachFeature = (feature: any, layer: L.Layer) => {
       layer.on({
-        click: () => handleFeatureClick(feature)
+        click: () => handleFeatureClick(feature),
+        'pm:edit': (e: any) => {
+          const editedGeoJSON = e.target.toGeoJSON();
+          const targetId = feature.id || feature.properties?.id;
+          if (onPolygonEdit && targetId) {
+            onPolygonEdit(targetId, editedGeoJSON.geometry);
+          }
+        }
       });
 
       // إضافة Popup
