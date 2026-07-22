@@ -7,7 +7,7 @@ import os
 import uvicorn
 
 # استيراد المكونات المشتركة
-from routes.shared import memory, DB_PATH, BASE_DIR
+from routes.shared import memory, DB_PATH, BASE_DIR, start_segmenter_loader
 
 app = FastAPI(
     title="نظام فريق وكلاء التحليل الجغرافي (Geo-AI Swarm)",
@@ -69,6 +69,10 @@ async def generic_exception_handler(request: Request, exc: Exception):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
     return response
+
+@app.on_event("startup")
+def _start_segmenter_loader():
+    start_segmenter_loader()
 
 # Diagnostic info at startup
 print(f"[startup] BASE_DIR={BASE_DIR}")

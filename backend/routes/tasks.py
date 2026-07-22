@@ -16,10 +16,9 @@ tasks_router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 class StyleConfig(BaseModel):
     color: str
-    width: float
-    dash: str
-    fillOpacity: float
-    fillColor: str
+    width: int
+    dash: str = "solid"
+    fillOpacity: float = 0.2
 
 class TaskStyleRequest(BaseModel):
     styles: Dict[str, StyleConfig]
@@ -136,7 +135,7 @@ def regenerate_task_preview(task_id: str):
     
     try:
         from agent_system.projection_agent import ProjectionAgent
-        agent = ProjectionAgent(message_bus, get_segmenter())
+        agent = ProjectionAgent(memory, message_bus, get_segmenter())
         agent._generate_processed_preview(image_path, task_id, memory)
         
         updated_task = memory.get_task(task_id)
@@ -300,11 +299,16 @@ def get_task_logs(task_id: str):
 
 @tasks_router.get("/{task_id}/report", summary="3. جلب التقرير المساحي النهائي والطبقات")
 def get_task_report(task_id: str):
+    """
+    جلب التقرير الهندسي والمساحي النهائي للطبقات المستخرجة بالفدان والقيراط والسهم والتسميات المحلية.
+    """
     task = memory.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="المهمة المطلوبة غير موجودة.")
         
     layers = memory.get_task_layers(task_id)
+    
+    # تجهيز كائن التقرير
     report_layers = []
     for ly in layers:
         report_layers.append({
@@ -314,60 +318,83 @@ def get_task_report(task_id: str):
             "local_classification": ly["metadata"].get("local_classification", {}),
             "description": ly["metadata"].get("description", ""),
             "polygons_count": len(ly["polygons"]),
+            # إرسال إحداثيات الإسقاط الجغرافي للخرائط التفاعلية
             "geo_polygons": ly["geo_polygons"]
         })
         
+    # Build GeoJSON FeatureCollection for frontend convenience
     features = []
     sum_lon = 0.0
     sum_lat = 0.0
     count_coords = 0
     for ly in layers:
-        layer_name = ly["layer_name"]
-        geo_polygons = ly.get("geo_polygons") or []
+        layer_name = ly.get('layer_name')
+        metadata = ly.get('metadata') or {}
+        geo_polygons = ly.get('geo_polygons') or []
         for polygon in geo_polygons:
+            # polygon may be a ring or nested [[ring]]; normalize to ring
             ring = polygon
             if isinstance(polygon, list) and len(polygon) > 0 and isinstance(polygon[0], list) and len(polygon[0]) > 0 and isinstance(polygon[0][0], list):
                 ring = polygon[0]
+
+            # ensure coordinates are [lon, lat] and closed
+            norm_ring = []
             for pt in ring:
-                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
-                    sum_lon += float(pt[0])
-                    sum_lat += float(pt[1])
-                    count_coords += 1
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": polygon
-                },
-                "properties": {
-                    "layer_name": layer_name,
-                    "area_sq_meters": ly["area_sq_meters"],
-                    "area_agricultural": f"{ly['area_feddan']} فدان، {ly['area_qirat']} قيراط، {ly['area_sahm']:.2f} سهم",
-                    "description": ly["metadata"].get("description", "")
+                if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                    continue
+                lon = float(pt[0])
+                lat = float(pt[1])
+                norm_ring.append([lon, lat])
+                sum_lon += lon
+                sum_lat += lat
+                count_coords += 1
+
+            if len(norm_ring) >= 3:
+                # close ring
+                if norm_ring[0] != norm_ring[-1]:
+                    norm_ring.append(norm_ring[0])
+
+                feature = {
+                    "type": "Feature",
+                    "properties": {
+                        "name": layer_name,
+                        "layer_name": layer_name,
+                        "metadata": metadata
+                    },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [norm_ring]
+                    }
                 }
-            })
-            
-    center = None
-    if count_coords > 0:
-        center = [sum_lat / count_coords, sum_lon / count_coords]
-        
+                features.append(feature)
+
     geojson = {"type": "FeatureCollection", "features": features}
-    
-    meta = task.get("metadata") or {}
-    if isinstance(meta, str):
-        try:
-            meta = json.loads(meta)
-        except Exception:
-            meta = {}
-            
+    map_center = None
+    map_zoom = None
+    if count_coords > 0:
+        avg_lon = sum_lon / count_coords
+        avg_lat = sum_lat / count_coords
+        # MapViewer/Leaflet expects [lat, lon] for center
+        map_center = [avg_lat, avg_lon]
+        map_zoom = 17
+
+    processed_image_url = None
+    if task.get("processed_image_path") and os.path.exists(task["processed_image_path"]):
+        processed_image_url = f"/tasks/{task_id}/image/processed"
+
     return {
         "task_id": task_id,
-        "status": task.get("status"),
-        "created_at": task.get("created_at"),
-        "metadata": meta,
+        "status": task["status"],
+        "created_at": task["created_at"],
+        "updated_at": task["updated_at"],
+        "image_path": task["image_path"],
+        "image_url": f"/tasks/{task_id}/image",
+        "processed_image_url": processed_image_url,
+        "metadata": task["metadata"],
         "layers": report_layers,
         "geojson": geojson,
-        "center": center
+        "map_center": map_center,
+        "map_zoom": map_zoom
     }
 
 @tasks_router.get("/{task_id}/image", summary="4. جلب صورة المهمة الأصلية")

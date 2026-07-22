@@ -1,24 +1,32 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import os
 import io
 import json
 import uuid
 import hashlib
+import asyncio
+import shutil
 import requests
 import mercantile
 from PIL import Image as PILImage
 import numpy as np
 from pyproj import Transformer
-from urllib.parse import urlparse, parse_qs, urljoin, urlencode
+from typing import Optional
+from urllib.parse import urlparse
 
-from routes.shared import memory, UPLOAD_DIR, CHUNK_UPLOAD_DIR, launch_background_processing
-from routes.shared import rasterio
+from routes.shared import (
+    memory, UPLOAD_DIR, CHUNK_UPLOAD_DIR, launch_background_processing,
+    rasterio, get_geotiff_metadata, download_remote_file,
+    merge_chunk_files, _write_file_sync, normalize_remote_url,
+    choose_remote_filename,
+)
 
 upload_router = APIRouter(prefix="", tags=["upload"])
 
 DEFAULT_CHUNK_SIZE_BYTES = 4 * 1024 * 1024
 DEFAULT_CHUNK_UPLOAD_CONCURRENCY = 2
+
 
 def get_chunk_upload_config() -> dict:
     try:
@@ -36,8 +44,10 @@ def get_chunk_upload_config() -> dict:
         "concurrency": max(1, concurrency),
     }
 
+
 def get_chunk_dir(upload_id: str) -> str:
     return os.path.join(CHUNK_UPLOAD_DIR, upload_id)
+
 
 def write_chunk_metadata(upload_id: str, metadata: dict):
     chunk_dir = get_chunk_dir(upload_id)
@@ -46,6 +56,7 @@ def write_chunk_metadata(upload_id: str, metadata: dict):
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f)
 
+
 def read_chunk_metadata(upload_id: str) -> dict | None:
     meta_path = os.path.join(get_chunk_dir(upload_id), "metadata.json")
     if not os.path.exists(meta_path):
@@ -53,90 +64,33 @@ def read_chunk_metadata(upload_id: str) -> dict | None:
     with open(meta_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def normalize_remote_url(remote_url: str) -> str:
-    parsed = urlparse(remote_url.strip())
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("URL must start with http:// or https://")
 
-    if "drive.google.com" in parsed.netloc:
-        query = parse_qs(parsed.query)
-        if "/file/d/" in parsed.path:
-            file_id = parsed.path.split("/file/d/")[1].split("/")[0]
-            return f"https://drive.google.com/uc?export=download&id={file_id}"
-        if "id" in query:
-            return f"https://drive.google.com/uc?export=download&id={query['id'][0]}"
-        if "/open" in parsed.path and "id" in query:
-            return f"https://drive.google.com/uc?export=download&id={query['id'][0]}"
+def cleanup_chunk_upload(upload_id: str):
+    chunk_dir = get_chunk_dir(upload_id)
+    if os.path.exists(chunk_dir):
+        for root, dirs, files in os.walk(chunk_dir, topdown=False):
+            for name in files:
+                try:
+                    os.remove(os.path.join(root, name))
+                except Exception:
+                    pass
+            for name in dirs:
+                try:
+                    os.rmdir(os.path.join(root, name))
+                except Exception:
+                    pass
+        try:
+            os.rmdir(chunk_dir)
+        except Exception:
+            pass
 
-    if "dropbox.com" in parsed.netloc:
-        if "dl=0" in parsed.query:
-            return remote_url.replace("dl=0", "dl=1")
-        if parsed.path.endswith("/") and "dl=" not in parsed.query:
-            return f"{remote_url}?dl=1"
-
-    return remote_url.strip()
-
-def _extract_google_drive_download_url(html: str, base_url: str) -> str | None:
-    import html as html_lib
-    match = re.search(r'href=["\']([^"\']*uc\?export=download[^"\']*)["\']', html)
-    if match:
-        unescaped_url = html_lib.unescape(match.group(1))
-        return urljoin(base_url, unescaped_url)
-
-    form_match = re.search(r'<form[^>]*action="([^"]*)"[^>]*>(.*?)</form>', html, re.DOTALL)
-    if form_match:
-        action_url = form_match.group(1)
-        form_body = form_match.group(2)
-        params = {}
-        for inp in re.finditer(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form_body):
-            params[inp.group(1)] = inp.group(2)
-        if params:
-            return f"{action_url}?{urlencode(params)}"
-
-    match = re.search(r'name="confirm" value="([0-9A-Za-z_-]+)"', html)
-    if match:
-        return _append_confirm_token(base_url, match.group(1))
-
-    match = re.search(r'name="download_warning" value="([0-9A-Za-z_-]+)"', html)
-    if match:
-        return _append_confirm_token(base_url, match.group(1))
-
-    match = re.search(r'confirm=([0-9A-Za-z_-]+)', html)
-    if match:
-        return _append_confirm_token(base_url, match.group(1))
-
-    return None
-
-def _append_confirm_token(url: str, token: str) -> str:
-    if "confirm=" in url:
-        return re.sub(r'confirm=[^&]+', f'confirm={token}', url)
-    sep = '&' if '?' in url else '?'
-    return f"{url}{sep}confirm={token}"
-
-def choose_remote_filename(remote_url: str, response) -> str | None:
-    cd = response.headers.get("content-disposition")
-    if cd:
-        parts = cd.split(";")
-        for part in parts:
-            if "filename=" in part:
-                filename = part.split("=")[1].strip().strip('"')
-                return filename
-
-    parsed = urlparse(remote_url)
-    path = parsed.path
-    if path:
-        filename = os.path.basename(path)
-        if filename and "." in filename:
-            return filename
-    return None
-
-import re
 
 # --- Chunk upload endpoints ---
 
 @upload_router.get("/tasks/analyze/chunk/config", summary="Get safe chunk upload configuration")
 def chunk_upload_config():
     return get_chunk_upload_config()
+
 
 @upload_router.get("/tasks/analyze/chunk/status", summary="Check which chunks are already stored for a resumable upload")
 async def get_chunk_upload_status(upload_id: str):
@@ -150,106 +104,146 @@ async def get_chunk_upload_status(upload_id: str):
             "filename": None,
         }
 
+    # Detect uploaded chunks directly from files on disk
     chunk_dir = get_chunk_dir(upload_id)
-    uploaded = []
-    total = metadata.get("total_chunks", 0)
-    for i in range(total):
-        chunk_file = os.path.join(chunk_dir, f"chunk_{i}")
-        if os.path.exists(chunk_file):
-            uploaded.append(i)
+    uploaded_chunks = []
+    total_chunks = metadata.get("total_chunks", 0)
+    for idx in range(int(total_chunks)):
+        if os.path.exists(os.path.join(chunk_dir, f"chunk_{idx}")):
+            uploaded_chunks.append(idx)
 
     return {
         "upload_id": upload_id,
         "exists": True,
-        "uploaded_chunks": uploaded,
-        "total_chunks": total,
+        "uploaded_chunks": sorted(uploaded_chunks),
+        "total_chunks": total_chunks,
         "filename": metadata.get("filename"),
     }
 
+
 @upload_router.post("/tasks/analyze/chunk", summary="Upload a file chunk for a large task image")
 async def upload_task_chunk(
-    upload_id: str = Form(...),
-    chunk_index: int = Form(...),
-    total_chunks: int = Form(...),
-    filename: str = Form(...),
-    file: UploadFile = File(...)
+    upload_id: str = Form(..., description='معرف الرفع المقطّع الفريد'),
+    chunk_index: int = Form(..., description='فهرس الجزء الحالي بدءاً من 0'),
+    total_chunks: int = Form(..., description='إجمالي عدد الأجزاء'),
+    file: UploadFile = File(..., description="جزء من الملف"),
+    filename: str = Form(..., description='اسم الملف الكامل مع الامتداد'),
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
+    pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
+    ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM'),
+    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
-    chunk_dir = get_chunk_dir(upload_id)
-    os.makedirs(chunk_dir, exist_ok=True)
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail="فهرس الجزء غير صالح")
 
-    metadata = read_chunk_metadata(upload_id)
-    if not metadata:
+    upload_dir = get_chunk_dir(upload_id)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # metadata.json only needs to be written once
+    meta_path = os.path.join(upload_dir, "metadata.json")
+    if not os.path.exists(meta_path):
         metadata = {
-            "upload_id": upload_id,
-            "total_chunks": total_chunks,
             "filename": filename,
+            "image_type": image_type,
+            "geospatial_crs": geospatial_crs,
+            "use_geo_metadata": use_geo_metadata,
+            "pixel_scale_meters": pixel_scale_meters,
+            "ref_latitude": ref_latitude,
+            "ref_longitude": ref_longitude,
+            "sam_use_fallback": sam_use_fallback,
+            "sam_min_mask_region_area": sam_min_mask_region_area,
+            "sam_points_per_side": sam_points_per_side,
+            "sam_pred_iou_thresh": sam_pred_iou_thresh,
+            "sam_stability_score_thresh": sam_stability_score_thresh,
+            "total_chunks": total_chunks,
+            "tfw_content": tfw_content
         }
         write_chunk_metadata(upload_id, metadata)
 
-    chunk_file = os.path.join(chunk_dir, f"chunk_{chunk_index}")
-    content = await file.read()
-    with open(chunk_file, "wb") as f:
-        f.write(content)
+    chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")
+    try:
+        content = await file.read()
+        # Offload blocking write to a background thread to prevent blocking Uvicorn's async event loop
+        await asyncio.to_thread(_write_file_sync, chunk_path, content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"تعذر حفظ جزء الملف: {str(e)}")
 
-    return {"message": f"Chunk {chunk_index} uploaded successfully."}
+    return {
+        "upload_id": upload_id,
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "status": "chunk_received"
+    }
+
 
 @upload_router.options("/tasks/analyze/chunk")
-def options_chunk():
-    return JSONResponse(content={"message": "OK"})
+async def options_task_chunk(request: Request):
+    # Explicitly respond to preflight to ensure CORS headers reach the browser
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
 
 @upload_router.post("/tasks/analyze/chunk/complete", summary="Finalize chunked task upload and start analysis")
-async def complete_chunk_upload(
+async def complete_task_chunk_upload(
     background_tasks: BackgroundTasks,
-    upload_id: str = Form(...),
-    image_type: str = Form("regular"),
-    geospatial_crs: str = Form("EPSG:4326"),
-    use_geo_metadata: bool = Form(False),
-    pixel_scale_meters: float = Form(1.0),
-    ref_latitude: float = Form(0.0),
-    ref_longitude: float = Form(0.0),
-    sam_use_fallback: bool = Form(False),
-    sam_min_mask_region_area: int = Form(500),
-    sam_points_per_side: int = Form(16),
-    sam_pred_iou_thresh: float = Form(0.86),
-    sam_stability_score_thresh: float = Form(0.85),
-    tfw_content: str = Form("")
+    upload_id: str = Form(..., description='معرف الرفع المقطّع الفريد')
 ):
     metadata = read_chunk_metadata(upload_id)
     if not metadata:
-        raise HTTPException(status_code=404, detail="Upload session not found.")
+        raise HTTPException(status_code=404, detail="بيانات الرفع المقطّع غير موجودة")
 
-    filename = metadata["filename"]
-    _, ext = os.path.splitext(filename)
-    task_id = f"task_{uuid.uuid4().hex[:8]}"
-    temp_file_name = f"task_{task_id}{ext}"
-    temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
+    total_chunks = metadata.get("total_chunks")
+    if total_chunks is None:
+        raise HTTPException(status_code=400, detail="عدد الأجزاء مفقود")
 
+    # Validate that all chunk files physically exist on disk
     chunk_dir = get_chunk_dir(upload_id)
-    total_chunks = metadata["total_chunks"]
+    missing_chunks = []
+    for idx in range(int(total_chunks)):
+        chunk_path = os.path.join(chunk_dir, f"chunk_{idx}")
+        if not os.path.exists(chunk_path):
+            missing_chunks.append(idx)
 
-    sha256_hash = hashlib.sha256()
+    if missing_chunks:
+        raise HTTPException(status_code=400, detail=f"الأجزاء غير المكتملة: {missing_chunks}")
+
+    file_extension = os.path.splitext(metadata["filename"])[1] or ".bin"
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    temp_file_name = f"{task_id}{file_extension}"
+    temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
     try:
-        with open(temp_file_path, "wb") as outfile:
-            for i in range(total_chunks):
-                chunk_file = os.path.join(chunk_dir, f"chunk_{i}")
-                if not os.path.exists(chunk_file):
-                    raise HTTPException(status_code=400, detail=f"Missing chunk index {i}")
-                with open(chunk_file, "rb") as infile:
-                    chunk_data = infile.read()
-                    outfile.write(chunk_data)
-                    sha256_hash.update(chunk_data)
+        # Offload file merge to background thread and get file hash
+        file_hash = await asyncio.to_thread(merge_chunk_files, upload_id, temp_file_path, total_chunks, CHUNK_UPLOAD_DIR)
+        cleanup_chunk_upload(upload_id)
+
+        # كتابة ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
+        tfw_content = metadata.get("tfw_content")
+        if tfw_content:
+            base_path, ext = os.path.splitext(temp_file_path)
+            world_ext_map = {
+                '.tif': '.tfw', '.tiff': '.tfw', '.geotiff': '.tfw',
+                '.jpg': '.jgw', '.jpeg': '.jgw',
+                '.png': '.pgw'
+            }
+            world_ext = world_ext_map.get(ext.lower(), '.tfw')
+            with open(base_path + world_ext, "w", encoding="utf-8") as wf:
+                wf.write(tfw_content)
     except Exception as e:
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        raise HTTPException(status_code=500, detail=f"Failed to assemble file chunks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"فشل تجميع الأجزاء: {str(e)}")
 
-    if tfw_content:
-        base_path, _ = os.path.splitext(temp_file_path)
-        with open(base_path + ".tfw", "w", encoding="utf-8") as wf:
-            wf.write(tfw_content)
-
-    file_hash = sha256_hash.hexdigest()
-    
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
     existing_task = memory.get_completed_task_by_hash(file_hash)
     if existing_task:
         try:
@@ -257,149 +251,106 @@ async def complete_chunk_upload(
                 os.remove(temp_file_path)
         except Exception:
             pass
+
+        print(f"[api] complete_task_chunk_upload: found cached task {existing_task['task_id']} for hash {file_hash}")
         return {
             "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
-            "task_id": existing_task["task_id"],
-            "status": "COMPLETED",
-            "cached": True
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
         }
 
-    # Auto-detect GeoTIFF CRS if possible
-    final_image_type = image_type
-    detected_crs = geospatial_crs
-    if rasterio is not None and ext.lower() in [".tif", ".tiff", ".geotiff"]:
-        try:
-            with rasterio.open(temp_file_path) as dataset:
-                if dataset.crs is not None:
-                    final_image_type = "geospatial"
-                    detected_crs = str(dataset.crs)
-        except Exception:
-            pass
-
     task_metadata = {
-        "image_type": final_image_type,
-        "geospatial_crs": detected_crs,
-        "use_geo_metadata": use_geo_metadata,
-        "pixel_scale_meters": pixel_scale_meters,
-        "ref_latitude": ref_latitude,
-        "ref_longitude": ref_longitude,
-        "sam_use_fallback": sam_use_fallback,
-        "sam_min_mask_region_area": sam_min_mask_region_area,
-        "sam_points_per_side": sam_points_per_side,
-        "sam_pred_iou_thresh": sam_pred_iou_thresh,
-        "sam_stability_score_thresh": sam_stability_score_thresh
+        key: value for key, value in metadata.items()
+        if key not in ["filename", "total_chunks"]
     }
 
+    print(f"[api] complete_task_chunk_upload request task_id={task_id} upload_id={upload_id} db={getattr(memory, 'db_path', '<no-db>')}")
     created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
-    if not created:
-        raise HTTPException(status_code=500, detail="Failed to create task in DB.")
+    print(f"[api] complete_task_chunk_upload create_task returned {created} for {task_id}")
 
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+
+    if not created:
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
+
+    # mark task as ready to be processed
+    memory.update_task_status(task_id, "PENDING")
     launch_background_processing(task_id, temp_file_path)
 
-    # Clean up chunk directory
-    try:
-        shutil.rmtree(chunk_dir)
-    except Exception:
-        pass
-
     return {
-        "message": "تم تجميع الأجزاء وبدء تحليل الصورة بالذكاء الاصطناعي في الخلفية.",
+        "message": "تم تجميع الأجزاء وبدء المهمة بنجاح.",
         "task_id": task_id,
         "status": "PENDING"
     }
 
+
 @upload_router.options("/tasks/analyze/chunk/complete")
-def options_chunk_complete():
-    return JSONResponse(content={"message": "OK"})
+async def options_task_chunk_complete(request: Request):
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
 
 @upload_router.options("/tasks/analyze/remote")
-def options_remote():
-    return JSONResponse(content={"message": "OK"})
+async def options_task_remote(request: Request):
+    # Explicitly respond to preflight to ensure CORS headers reach the browser
+    origin = request.headers.get("origin", "*")
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    })
+
 
 @upload_router.post("/tasks/analyze/remote", summary="Start analysis from a remote image URL")
 async def analyze_remote_image(
     background_tasks: BackgroundTasks,
-    remote_url: str = Form(...),
-    image_type: str = Form("regular"),
-    geospatial_crs: str = Form("EPSG:4326"),
-    use_geo_metadata: bool = Form(False),
-    pixel_scale_meters: float = Form(1.0),
-    ref_latitude: float = Form(0.0),
-    ref_longitude: float = Form(0.0),
-    sam_use_fallback: bool = Form(False),
-    sam_min_mask_region_area: int = Form(500),
-    sam_points_per_side: int = Form(16),
-    sam_pred_iou_thresh: float = Form(0.86),
-    sam_stability_score_thresh: float = Form(0.85)
+    remote_url: str = Form(..., description='رابط الملف الخارجي'),
+    filename: str | None = Form(None, description='اسم الملف المراد حفظه (اختياري)'),
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
+    pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
+    ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM')
 ):
     try:
-        download_url = normalize_remote_url(remote_url)
-    except ValueError as err:
-        raise HTTPException(status_code=400, detail=str(err))
+        dl_url = normalize_remote_url(remote_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(download_url, stream=True, headers=headers, timeout=30)
-        
-        # Google Drive confirm token prompt handling
-        if response.ok and "txt/html" in response.headers.get("content-type", "").lower():
-            confirm_url = _extract_google_drive_download_url(response.text, download_url)
-            if confirm_url:
-                response = requests.get(confirm_url, stream=True, headers=headers, timeout=30)
-                
-        if not response.ok:
-            raise HTTPException(status_code=400, detail=f"Failed to fetch image from URL. Status: {response.status_code}")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error accessing remote URL: {str(e)}")
-
-    remote_filename = choose_remote_filename(remote_url, response) or "remote_image.png"
-    _, ext = os.path.splitext(remote_filename)
-    
     task_id = f"task_{uuid.uuid4().hex[:8]}"
-    temp_file_name = f"task_{task_id}{ext}"
+    guessed_name = filename or os.path.basename(urlparse(dl_url).path) or f"remote_image_{task_id}.bin"
+    file_extension = os.path.splitext(guessed_name)[1] or ".bin"
+    temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
-    sha256_hash = hashlib.sha256()
     try:
-        with open(temp_file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    sha256_hash.update(chunk)
+        # run download in thread and pass task_id to enable progress updates
+        await asyncio.to_thread(download_remote_file, dl_url, temp_file_path, task_id)
     except Exception as e:
         if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        raise HTTPException(status_code=500, detail=f"Failed to save remote image: {str(e)}")
-
-    file_hash = sha256_hash.hexdigest()
-    existing_task = memory.get_completed_task_by_hash(file_hash)
-    if existing_task:
-        try:
-            if os.path.exists(temp_file_path):
+            try:
                 os.remove(temp_file_path)
-        except Exception:
-            pass
-        return {
-            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
-            "task_id": existing_task["task_id"],
-            "status": "COMPLETED",
-            "cached": True
-        }
-
-    final_image_type = image_type
-    detected_crs = geospatial_crs
-    if rasterio is not None and ext.lower() in [".tif", ".tiff", ".geotiff"]:
-        try:
-            with rasterio.open(temp_file_path) as dataset:
-                if dataset.crs is not None:
-                    final_image_type = "geospatial"
-                    detected_crs = str(dataset.crs)
-        except Exception:
-            pass
+            except Exception:
+                pass
+        raise HTTPException(status_code=400, detail=f"فشل تنزيل الملف من الرابط: {str(e)}")
 
     task_metadata = {
-        "image_type": final_image_type,
-        "geospatial_crs": detected_crs,
+        "remote_url": remote_url,
+        "image_type": image_type,
+        "geospatial_crs": geospatial_crs,
         "use_geo_metadata": use_geo_metadata,
         "pixel_scale_meters": pixel_scale_meters,
         "ref_latitude": ref_latitude,
@@ -408,89 +359,126 @@ async def analyze_remote_image(
         "sam_min_mask_region_area": sam_min_mask_region_area,
         "sam_points_per_side": sam_points_per_side,
         "sam_pred_iou_thresh": sam_pred_iou_thresh,
-        "sam_stability_score_thresh": sam_stability_score_thresh
+        "sam_stability_score_thresh": sam_stability_score_thresh,
     }
 
-    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
+    print(f"[api] analyze_remote_image request task_id={task_id} url={remote_url} db={getattr(memory, 'db_path', '<no-db>')}")
+    created = memory.create_task(task_id, temp_file_path, task_metadata)
+    print(f"[api] analyze_remote_image create_task returned {created} for {task_id}")
+
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+
     if not created:
-        raise HTTPException(status_code=500, detail="Failed to create task record.")
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
 
     launch_background_processing(task_id, temp_file_path)
 
     return {
-        "message": "تم سحب الصورة من الرابط بنجاح وجاري تحليلها بالذكاء الاصطناعي.",
+        "message": "تم بدء استيراد الملف من الرابط وبدء المهمة.",
         "task_id": task_id,
         "status": "PENDING"
     }
+
 
 @upload_router.post("/tasks/analyze", summary="1. بدء تحليل الصورة عبر فريق الوكلاء")
 async def analyze_image_with_agents(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="الصورة الجوية المراد تحليلها"),
-    image_type: str = Form("regular"),
-    geospatial_crs: str = Form("EPSG:4326"),
-    use_geo_metadata: bool = Form(False),
-    pixel_scale_meters: float = Form(1.0),
-    ref_latitude: float = Form(0.0),
-    ref_longitude: float = Form(0.0),
-    sam_use_fallback: bool = Form(False),
-    sam_min_mask_region_area: int = Form(500),
-    sam_points_per_side: int = Form(16),
-    sam_pred_iou_thresh: float = Form(0.86),
-    sam_stability_score_thresh: float = Form(0.85),
-    tfw_content: str = Form("")
+    image_type: str = Form('regular', description='نوع الصورة: regular أو geospatial'),
+    geospatial_crs: str = Form('EPSG:4326', description='نظام الإحداثيات إذا كانت الصورة جغرافية'),
+    use_geo_metadata: bool = Form(False, description='محاولة قراءة بيانات GeoTIFF المضمنة إذا كانت متاحة'),
+    pixel_scale_meters: float = Form(0.5, description="مقياس الرسم: كم متر يمثله البكسل الواحد (GSD)"),
+    ref_latitude: float = Form(15.3694, description="إحداثي خط العرض لنقطة المرجع المساحية"),
+    ref_longitude: float = Form(44.1910, description="إحداثي خط الطول لنقطة المرجع المساحية"),
+    sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
+    sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
+    sam_points_per_side: int = Form(8, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
+    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM'),
+    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
 ):
-    _, ext = os.path.splitext(file.filename)
+    """
+    نقطة انطلاق التحليل:
+    ترفع الصورة الجوية وتدخل معاملات الإسقاط، فيقوم النظام بإنشاء مهمة فريدة
+    وإطلاق فريق الوكلاء للعمل في الخلفية (Async Task).
+    """
+    # 1. توليد معرف مهمة فريد
     task_id = f"task_{uuid.uuid4().hex[:8]}"
-    temp_file_name = f"task_{task_id}{ext}"
+
+    # 2. حفظ ملف الصورة مؤقتاً على القرص
+    file_extension = os.path.splitext(file.filename)[1]
+    temp_file_name = f"{task_id}{file_extension}"
     temp_file_path = os.path.join(UPLOAD_DIR, temp_file_name)
 
+    # Stream-write the uploaded file in chunks, enforce a max upload size, and compute hash
+    MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+    size = 0
     sha256_hash = hashlib.sha256()
     try:
         with open(temp_file_path, "wb") as f:
-            while chunk := await file.read(8192):
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB chunks
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    try:
+                        f.close()
+                        os.remove(temp_file_path)
+                    except Exception:
+                        pass
+                    raise HTTPException(status_code=413, detail="الملف أكبر من الحد المسموح (1 GB)")
                 f.write(chunk)
                 sha256_hash.update(chunk)
+    except HTTPException:
+        raise
     except Exception as e:
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
-
-    if tfw_content:
-        base_path, _ = os.path.splitext(temp_file_path)
-        with open(base_path + ".tfw", "w", encoding="utf-8") as wf:
-            wf.write(tfw_content)
-
-    file_hash = sha256_hash.hexdigest()
-    
-    existing_task = memory.get_completed_task_by_hash(file_hash)
-    if existing_task:
+        # cleanup partial file
         try:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
         except Exception:
             pass
-        return {
-            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
-            "task_id": existing_task["task_id"],
-            "status": "COMPLETED",
-            "cached": True
-        }
+        raise HTTPException(status_code=500, detail=f"تعذر حفظ الملف المرفوع: {str(e)}")
 
-    final_image_type = image_type
-    detected_crs = geospatial_crs
-    if rasterio is not None and ext.lower() in [".tif", ".tiff", ".geotiff"]:
+    # حفظ ملف الإحداثيات المصاحب (TFW) إذا تم تمريره
+    if tfw_content:
+        base_path, ext = os.path.splitext(temp_file_path)
+        world_ext_map = {
+            '.tif': '.tfw', '.tiff': '.tfw', '.geotiff': '.tfw',
+            '.jpg': '.jgw', '.jpeg': '.jgw',
+            '.png': '.pgw'
+        }
+        world_ext = world_ext_map.get(ext.lower(), '.tfw')
+        with open(base_path + world_ext, "w", encoding="utf-8") as wf:
+            wf.write(tfw_content)
+
+    file_hash = sha256_hash.hexdigest()
+
+    # تحقق مما إذا كانت الصورة قد تم تحليلها مسبقاً بنجاح
+    existing_task = memory.get_completed_task_by_hash(file_hash)
+    if existing_task:
+        # تنظيف الملف المؤقت لأننا لن نحتاجه
         try:
-            with rasterio.open(temp_file_path) as dataset:
-                if dataset.crs is not None:
-                    final_image_type = "geospatial"
-                    detected_crs = str(dataset.crs)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
         except Exception:
             pass
 
+        print(f"[api] analyze_image_with_agents: found cached task {existing_task['task_id']} for hash {file_hash}")
+        return {
+            "message": "تم العثور على نتيجة سابقة لنفس الصورة.",
+            "task_id": existing_task['task_id'],
+            "status": "COMPLETED"
+        }
+
+    # 3. تسجيل المهمة في قاعدة بيانات الذاكرة المشتركة (SQLite) بوضعية PENDING
     task_metadata = {
-        "image_type": final_image_type,
-        "geospatial_crs": detected_crs,
+        "image_type": image_type,
+        "geospatial_crs": geospatial_crs,
         "use_geo_metadata": use_geo_metadata,
         "pixel_scale_meters": pixel_scale_meters,
         "ref_latitude": ref_latitude,
@@ -499,20 +487,42 @@ async def analyze_image_with_agents(
         "sam_min_mask_region_area": sam_min_mask_region_area,
         "sam_points_per_side": sam_points_per_side,
         "sam_pred_iou_thresh": sam_pred_iou_thresh,
-        "sam_stability_score_thresh": sam_stability_score_thresh
+        "sam_stability_score_thresh": sam_stability_score_thresh,
+        "tfw_content": tfw_content
     }
 
-    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
-    if not created:
-        raise HTTPException(status_code=500, detail="Failed to create task.")
+    # Auto-detect GeoTIFF metadata if the file ends with .tif/.tiff/.geotiff, regardless of user input
+    if temp_file_path.lower().endswith(('.tif', '.tiff', '.geotiff')):
+        geo_metadata = get_geotiff_metadata(temp_file_path)
+        if geo_metadata and geo_metadata.get('transform') and geo_metadata.get('crs'):
+            image_type = 'geospatial'
+            use_geo_metadata = True
+            task_metadata['image_type'] = 'geospatial'
+            task_metadata['use_geo_metadata'] = True
+            task_metadata['geo_metadata'] = geo_metadata
+            print(f"[api] Auto-detected valid GeoTIFF metadata for {temp_file_path}. Promoted to geospatial.")
 
+    print(f"[api] analyze_image_with_agents request task_id={task_id} file={file.filename} db={getattr(memory, 'db_path', '<no-db>')}")
+    created = memory.create_task(task_id, temp_file_path, task_metadata, image_hash=file_hash)
+    print(f"[api] analyze_image_with_agents create_task returned {created} for {task_id}")
+
+    # Debug: verify task was created
+    if created:
+        verify_task = memory.get_task(task_id)
+        print(f"[api] verify_task after create: {verify_task}")
+
+    if not created:
+        raise HTTPException(status_code=500, detail="تعذر حفظ سجل المهمة في قاعدة البيانات")
+
+    # 4. إطلاق تدفق الوكلاء كعملية في الخلفية لمنع تعليق الطلب
     launch_background_processing(task_id, temp_file_path)
 
     return {
-        "message": "تم استلام الصورة وجاري تحليلها بالذكاء الاصطناعي في الخلفية.",
+        "message": "تم استلام الطلب وبدء تشغيل فريق الوكلاء بنجاح.",
         "task_id": task_id,
         "status": "PENDING"
     }
+
 
 # --- Tiles and KML endpoints ---
 
@@ -553,7 +563,7 @@ def crop_from_tiles(
         for tile in tile_list:
             url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
             try:
-                headers = {"User-Agent": "Mozilla/5.0"}
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                 resp = requests.get(url, headers=headers, timeout=10)
                 resp.raise_for_status()
                 img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
@@ -570,7 +580,7 @@ def crop_from_tiles(
 
         b_min = mercantile.xy_bounds(min_x, max_y, zoom)
         b_max = mercantile.xy_bounds(max_x, min_y, zoom)
-        
+
         tile_left = b_min.left
         tile_bottom = b_min.bottom
         tile_right = b_max.right
@@ -624,12 +634,13 @@ def crop_from_tiles(
             "tiled": True
         }
 
-        with rasterio.open(out_path, "wb", **profile) as dst:
+        with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(rgb)
 
         return FileResponse(out_path, media_type="image/tiff", filename=out_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تركيب البلاطات وتصدير GeoTIFF: {str(e)}")
+
 
 @upload_router.get("/crop/analyze_from_tiles", summary="تحليل من مصدر بلاطات (XYZ/WMTS) عبر تركيب البلاطات وتوليد ملف GeoJSON للمستخدم")
 def analyze_from_tiles(
@@ -668,7 +679,7 @@ def analyze_from_tiles(
         for tile in tile_list:
             url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
             try:
-                headers = {"User-Agent": "Mozilla/5.0"}
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                 resp = requests.get(url, headers=headers, timeout=10)
                 resp.raise_for_status()
                 img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
@@ -685,7 +696,7 @@ def analyze_from_tiles(
 
         b_min = mercantile.xy_bounds(min_x, max_y, zoom)
         b_max = mercantile.xy_bounds(max_x, min_y, zoom)
-        
+
         tile_left = b_min.left
         tile_bottom = b_min.bottom
         tile_right = b_max.right
@@ -739,12 +750,12 @@ def analyze_from_tiles(
             "tiled": True
         }
 
-        with rasterio.open(out_path, "wb", **profile) as dst:
+        with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(rgb)
 
         task_id = "task_" + uuid.uuid4().hex[:8]
         file_hash = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
-        
+
         task_metadata = {
             "image_type": "geospatial",
             "geospatial_crs": "EPSG:3857",
@@ -753,7 +764,7 @@ def analyze_from_tiles(
             "ref_latitude": min_lat,
             "ref_longitude": min_lon
         }
-        
+
         created = memory.create_task(task_id, out_path, task_metadata, image_hash=file_hash)
         if created:
             memory.update_task_status(task_id, "PENDING")
@@ -764,6 +775,7 @@ def analyze_from_tiles(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل تركيب البلاطات وتصدير GeoTIFF: {str(e)}")
+
 
 def extract_coords_from_geojson(obj, lons, lats):
     if isinstance(obj, list):
@@ -777,14 +789,15 @@ def extract_coords_from_geojson(obj, lons, lats):
         for val in obj.values():
             extract_coords_from_geojson(val, lons, lats)
 
+
 def extract_bbox_from_file(filename: str, content: bytes) -> tuple:
+    import re
     ext = os.path.splitext(filename)[1].lower()
     lons = []
     lats = []
-    
+
     if ext == ".geojson" or ext == ".json":
         try:
-            import json
             data = json.loads(content.decode("utf-8", errors="ignore"))
             extract_coords_from_geojson(data, lons, lats)
         except Exception as e:
@@ -792,7 +805,6 @@ def extract_bbox_from_file(filename: str, content: bytes) -> tuple:
     elif ext in [".kml", ".xml"]:
         try:
             text = content.decode("utf-8", errors="ignore")
-            import re
             coords_text = re.findall(r"<coordinates>(.*?)</coordinates>", text, re.DOTALL)
             for block in coords_text:
                 for pt_str in block.strip().split():
@@ -807,11 +819,12 @@ def extract_bbox_from_file(filename: str, content: bytes) -> tuple:
             raise ValueError(f"فشل قراءة ملف KML: {str(e)}")
     else:
         raise ValueError("صيغة الملف غير مدعومة. يجب أن يكون .kml أو .geojson")
-        
+
     if not lons or not lats:
         raise ValueError("لم يتم العثور على أي إحداثيات صالحة في الملف المرفوع.")
-        
+
     return min(lons), min(lats), max(lons), max(lats)
+
 
 @upload_router.post("/tasks/analyze/kml", summary="إنشاء مهمة تحليل جديدة عبر رفع ملف KML أو GeoJSON")
 async def analyze_from_kml(
@@ -825,9 +838,13 @@ async def analyze_from_kml(
     sam_pred_iou_thresh: float = Form(0.60),
     sam_stability_score_thresh: float = Form(0.50)
 ):
+    """
+    يستقبل ملف KML أو GeoJSON، ويقوم بتنزيل بلاطات خرائط الأقمار الصناعية للمنطقة،
+    ودمجها كصورة GeoTIFF، ثم يبدأ التحليل التلقائي في الخلفية فوراً.
+    """
     if rasterio is None:
         raise HTTPException(status_code=500, detail="Rasterio غير متوفر على الخادم.")
-        
+
     try:
         content = await file.read()
         min_lon, min_lat, max_lon, max_lat = extract_bbox_from_file(file.filename, content)
@@ -837,12 +854,13 @@ async def analyze_from_kml(
         raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء قراءة الملف الجغرافي: {str(e)}")
 
     task_id = f"task_{uuid.uuid4().hex[:8]}"
-    
+
+    # 1. تنزيل ودمج البلاطات للمنطقة المستهدفة
     try:
         tile_list = list(mercantile.tiles(min_lon, min_lat, max_lon, max_lat, zoom))
         if not tile_list:
             raise ValueError("لم يتم العثور على بلاطات تغطي المنطقة المحددة عند هذا الزوم.")
-            
+
         MAX_TILES = 500
         if len(tile_list) > MAX_TILES:
             raise ValueError(f"المنطقة المحددة كبيرة جداً (تحتوي على {len(tile_list)} بلاطة، الحد الأقصى هو {MAX_TILES}). يرجى تقليل الزوم أو اختيار منطقة أصغر.")
@@ -853,35 +871,33 @@ async def analyze_from_kml(
         min_y, max_y = min(ys), max(ys)
         cols = max_x - min_x + 1
         rows = max_y - min_y + 1
-        tile_size = 256
+        tile_sz = 256
 
-        canvas_w = cols * tile_size
-        canvas_h = rows * tile_size
-        
-        canvas = PILImage.new("RGBA", (canvas_w, canvas_h))
+        canvas_w = cols * tile_sz
+        canvas_h = rows * tile_sz
+
+        canvas = PILImage.new('RGBA', (canvas_w, canvas_h))
 
         for tile in tile_list:
             url = tile_template.format(z=zoom, x=tile.x, y=tile.y)
             try:
-                headers = {"User-Agent": "Mozilla/5.0"}
-                resp = requests.get(url, headers=headers, timeout=10)
+                resp = requests.get(url, timeout=10)
                 resp.raise_for_status()
-                img = PILImage.open(io.BytesIO(resp.content)).convert("RGBA")
+                img = PILImage.open(io.BytesIO(resp.content)).convert('RGBA')
             except Exception:
-                img = PILImage.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
+                img = PILImage.new('RGBA', (tile_sz, tile_sz), (0, 0, 0, 0))
 
-            px = (tile.x - min_x) * tile_size
-            py = (tile.y - min_y) * tile_size
+            px = (tile.x - min_x) * tile_sz
+            py = (tile.y - min_y) * tile_sz
             canvas.paste(img, (px, py))
 
-        from pyproj import Transformer
-        transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
         x_min, y_min = transformer.transform(min_lon, min_lat)
         x_max, y_max = transformer.transform(max_lon, max_lat)
 
         b_min = mercantile.xy_bounds(min_x, max_y, zoom)
         b_max = mercantile.xy_bounds(max_x, min_y, zoom)
-        
+
         tile_left = b_min.left
         tile_bottom = b_min.bottom
         tile_right = b_max.right
@@ -924,23 +940,24 @@ async def analyze_from_kml(
         out_path = os.path.join(UPLOAD_DIR, out_name)
 
         profile = {
-            "driver": "GTiff",
-            "dtype": "uint8",
-            "count": rgb.shape[0],
-            "height": out_h,
-            "width": out_w,
-            "transform": out_transform,
-            "crs": "EPSG:3857",
-            "compress": "LZW",
-            "tiled": True
+            'driver': 'GTiff',
+            'dtype': 'uint8',
+            'count': rgb.shape[0],
+            'height': out_h,
+            'width': out_w,
+            'transform': out_transform,
+            'crs': 'EPSG:3857',
+            'compress': 'LZW',
+            'tiled': True
         }
 
-        with rasterio.open(out_path, "w", **profile) as dst:
+        with rasterio.open(out_path, 'w', **profile) as dst:
             dst.write(rgb)
 
     except Exception as stitch_err:
         raise HTTPException(status_code=500, detail=f"فشل تنزيل أو تركيب بلاطات القمر الصناعي: {str(stitch_err)}")
 
+    # 2. تسجيل المهمة وبدء معالجتها بالوكلاء
     task_metadata = {
         "image_type": "geospatial",
         "geospatial_crs": "EPSG:3857",
