@@ -137,9 +137,10 @@ async def upload_task_chunk(
     sam_use_fallback: bool = Form(False, description='تمكين التراجع في SAM إذا كانت النتائج قليلة'),
     sam_min_mask_region_area: int = Form(500, description='أدنى مساحة منطقة قناع SAM بالبكسل للاحتفاظ بها'),
     sam_points_per_side: int = Form(16, description='عدد نقاط SAM لكل جانب لإنشاء الأقنعة'),
-    sam_pred_iou_thresh: float = Form(0.86, description='عتبة IoU لنموذج SAM'),
-    sam_stability_score_thresh: float = Form(0.85, description='عتبة ثبات قناع SAM'),
-    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري')
+    sam_pred_iou_thresh: float = Form(0.45, description='عتبة IoU لنموذج SAM'),
+    sam_stability_score_thresh: float = Form(0.30, description='عتبة ثبات قناع SAM'),
+    tfw_content: Optional[str] = Form(None, description='محتوى ملف TFW الجغرافي الاختياري'),
+    styling: Optional[str] = Form(None, description='إعدادات ألوان وأنماط الطبقات JSON')
 ):
     if chunk_index < 0 or chunk_index >= total_chunks:
         raise HTTPException(status_code=400, detail="فهرس الجزء غير صالح")
@@ -166,6 +167,12 @@ async def upload_task_chunk(
             "total_chunks": total_chunks,
             "tfw_content": tfw_content
         }
+        # Parse and include styling JSON if provided
+        if styling:
+            try:
+                metadata["styling"] = json.loads(styling)
+            except (json.JSONDecodeError, TypeError):
+                pass  # Skip invalid styling data
         write_chunk_metadata(upload_id, metadata)
 
     chunk_path = os.path.join(upload_dir, f"chunk_{chunk_index}")

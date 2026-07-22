@@ -11,20 +11,69 @@
   --border-color: rgba(67, 81, 99, 0.45); /* حدود ناعمة متناسقة */
   --primary-glow-rgb: 16, 185, 129; /* لون الزمرد الأخضر الهادئ */
   --secondary-glow-rgb: 217, 119, 6; /* لون برونزي دافئ */
+  --accent-cyan: #06b6d4;
+}
+
+[data-theme="autocad"] {
+  --background: #212830;
+  --foreground: #ffffff;
+  --card-bg: rgba(43, 52, 63, 0.9);
+  --border-color: rgba(67, 81, 99, 0.5);
+  --primary-glow-rgb: 6, 182, 212;
+  --secondary-glow-rgb: 16, 185, 129;
+  --accent-cyan: #06b6d4;
+}
+
+[data-theme="obsidian"] {
+  --background: #090d16;
+  --foreground: #ffffff;
+  --card-bg: rgba(17, 24, 39, 0.95);
+  --border-color: rgba(30, 58, 138, 0.4);
+  --primary-glow-rgb: 0, 242, 254;
+  --secondary-glow-rgb: 59, 130, 246;
+  --accent-cyan: #00f2fe;
+}
+
+[data-theme="charcoal"] {
+  --background: #121619;
+  --foreground: #f8fafc;
+  --card-bg: rgba(26, 33, 38, 0.9);
+  --border-color: rgba(45, 55, 72, 0.5);
+  --primary-glow-rgb: 16, 185, 129;
+  --secondary-glow-rgb: 245, 158, 11;
+  --accent-cyan: #10b981;
+}
+
+[data-theme="parchment"] {
+  --background: #f1f5f9;
+  --foreground: #0f172a;
+  --card-bg: #ffffff;
+  --border-color: #cbd5e1;
+  --primary-glow-rgb: 2, 132, 199;
+  --secondary-glow-rgb: 217, 119, 6;
+  --accent-cyan: #0284c7;
+}
+
+html {
+  font-size: 18px; /* تكبير الخطوط والنسق العام للموقع بالكامل بنسبة +12.5% */
 }
 
 body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
-  font-weight: 500; /* جعل الخط الأساسي بارزاً وواضحاً بشكل افتراضي */
+  font-weight: 600; /* جعل خطوط الموقع بالكامل عريضة وواضحة جداً */
+  font-size: 1.05rem;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-weight: 700 !important; /* إبراز جميع العناوين وسماكتها */
+  font-weight: 800 !important; /* إبراز العناوين بسماكة عالية وواضحة جداً */
+  letter-spacing: -0.01em;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); /* إضافة ظل خفيف خلف النصوص لزيادة وضوحها */
 }
 

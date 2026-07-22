@@ -101,7 +101,7 @@ export default function Home() {
         </section>
 
         {/* Giant Glowing Action Launchpad */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
           <Link href="/survey" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
             <div>
               <span className="text-5xl block mb-2">🛰️</span>
@@ -120,13 +120,22 @@ export default function Home() {
             <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">OPEN REGISTRY →</span>
           </Link>
 
-          <Link href="/cesium" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
+          <Link href="/globe" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
             <div>
               <span className="text-5xl block mb-2">🌐</span>
               <h3 className="text-white font-bold text-sm mt-3">الـ WebGlobe والقص المباشر</h3>
               <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">تصفح خريطة الأرض التفاعلية، ارسم وحدد مناطقك مساحياً ونزلها فوراً بصيغة AutoCAD DXF أو KML.</p>
             </div>
             <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">OPEN MAPS →</span>
+          </Link>
+
+          <Link href="/themes" className="engineering-glass glass-glow-cyan hover:scale-[1.01] transition-all p-6 rounded-3xl flex flex-col justify-between h-56 border-l-4 border-l-cyan-400">
+            <div>
+              <span className="text-5xl block mb-2">🎨</span>
+              <h3 className="text-white font-bold text-sm mt-3">استوديو سمات الواجهة</h3>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">بدّل بين سمات الموقع (أوتوكاد، أوبسيديان، فحمي، والنمط الورقي الميداني) مع التخصيص التفاعلي.</p>
+            </div>
+            <span className="text-[10px] text-cyan-400 font-mono-tech self-end font-bold">THEME STUDIO →</span>
           </Link>
         </section>
 

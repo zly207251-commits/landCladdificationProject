@@ -25,13 +25,31 @@ export default function HudNavigation() {
     return () => clearInterval(interval);
   }, []);
 
+  // استعادة السمة وحجم الخط والسماكة المحفوظة عند تحميل أي صفحة
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("app_theme");
+    if (savedTheme) {
+      document.documentElement.setAttribute("data-theme", savedTheme);
+    }
+
+    const savedFontSize = localStorage.getItem("app_font_size");
+    if (savedFontSize) {
+      document.documentElement.style.fontSize = `${savedFontSize}px`;
+    }
+
+    const savedFontWeight = localStorage.getItem("app_font_weight");
+    if (savedFontWeight) {
+      document.body.style.fontWeight = savedFontWeight;
+    }
+  }, []);
+
   const navLinks = [
-    { href: "/", label: "🏠 الرئيسية", activeOnExact: true },
-    { href: "/survey", label: "🛰️ استيراد وتحليل جديد", activeOnExact: false },
-    { href: "/history", label: "📜 سجل السجلات والمطابقة", activeOnExact: false },
-    { href: "/cesium", label: "🛰️ عارض Cesium 3D", activeOnExact: false },
-    { href: "/globe", label: "🌐 عارض Globe مستقل", activeOnExact: false },
-    { href: "/settings", label: "⚙️ إعدادات النموذج", activeOnExact: false }
+    { href: "/", icon: "🏠", label: "الرئيسية", activeOnExact: true },
+    { href: "/survey", icon: "🛰️", label: "استيراد وتحليل جديد", activeOnExact: false },
+    { href: "/history", icon: "📜", label: "سجل المطابقة", activeOnExact: false },
+    { href: "/globe", icon: "🌐", label: "عارض Globe 3D", activeOnExact: false },
+    { href: "/themes", icon: "🎨", label: "استوديو السمات", activeOnExact: false },
+    { href: "/settings", icon: "⚙️", label: "الإعدادات", activeOnExact: false }
   ];
 
   const isActive = (link: typeof navLinks[0]) => {
@@ -42,42 +60,52 @@ export default function HudNavigation() {
   };
 
   return (
-    <header className="w-full bg-[#212830]/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
+    <header className="w-full bg-[#212830]/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 md:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
       {/* Brand logo */}
-      <div className="flex items-center gap-2">
-        <span className="text-2xl">🌍</span>
+      <div className="flex items-center gap-2.5 shrink-0">
+        <span className="text-3xl">🌍</span>
         <div>
-          <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-1.5">
-            Geo-AI Swarm <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded font-mono-tech font-normal">V2.0</span>
+          <h1 className="text-base md:text-lg font-bold text-white tracking-tight flex items-center gap-2">
+            Geo-AI Swarm <span className="text-xs px-2 py-0.5 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded font-mono-tech font-bold">V2.0</span>
           </h1>
-          <p className="text-[9px] text-slate-400 mt-0.5">منصة هندسة المساحة والتخطيط العمراني</p>
+          <p className="text-[11px] text-slate-300 font-medium hidden sm:block">منصة هندسة المساحة والتخطيط العمراني</p>
         </div>
       </div>
 
-      {/* Nav Links */}
-      <nav className="flex flex-wrap items-center gap-1">
-        {navLinks.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-              isActive(link)
-                ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
-                : "text-slate-400 hover:text-white hover:bg-slate-900"
-            }`}
-          >
-            {link.label}
-          </Link>
-        ))}
+      {/* Responsive Nav Links with Icons + Tooltips */}
+      <nav className="flex flex-wrap items-center gap-1.5 overflow-x-auto py-1">
+        {navLinks.map((link) => {
+          const active = isActive(link);
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              title={`${link.icon} ${link.label}`}
+              className={`px-3 py-2 rounded-xl text-xs md:text-sm font-bold transition flex items-center gap-2 group relative shrink-0 ${
+                active
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-md ring-1 ring-cyan-400/20"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/90 border border-transparent"
+              }`}
+            >
+              <span className="text-lg md:text-xl group-hover:scale-110 transition-transform">{link.icon}</span>
+              <span className="hidden md:inline whitespace-nowrap">{link.label}</span>
+              
+              {/* Custom CSS Hover Tooltip for icon mode */}
+              <span className="absolute bottom-[-34px] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-black/90 text-cyan-300 text-[10px] rounded-lg border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl hidden sm:block">
+                {link.label}
+              </span>
+            </Link>
+          );
+        })}
       </nav>
 
       {/* Status Indicators */}
-      <div className="flex items-center gap-3 text-[10px] font-mono-tech">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950 border border-slate-850">
-          <span className={`w-1.5 h-1.5 rounded-full ${serverOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`}></span>
-          <span className="text-slate-400">{serverOnline ? "Server: Online" : "Server: Offline"}</span>
+      <div className="flex items-center gap-3 text-xs font-mono-tech font-bold shrink-0">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950 border border-slate-800">
+          <span className={`w-2 h-2 rounded-full ${serverOnline ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`}></span>
+          <span className="text-slate-300">{serverOnline ? "Online" : "Offline"}</span>
         </div>
-        <span className="text-slate-600">EPSG:4326</span>
+        <span className="text-slate-400 hidden xl:inline">EPSG:4326</span>
       </div>
     </header>
   );

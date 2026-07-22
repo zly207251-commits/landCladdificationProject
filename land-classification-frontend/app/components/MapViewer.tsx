@@ -523,23 +523,15 @@ export default function MapViewer({
           <a href={exportLink} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-md bg-white px-3 py-2 text-xs font-semibold text-blue-700 ring-1 ring-blue-200 hover:bg-blue-50">فتح TIFF</a>
         )}
       </div>
-      {/* زر لفتح الطبقات الحالية في عرض Cesium (يفتح في نافذة جديدة) */}
+      {/* زر لفتح الطبقات الحالية في عارض Globe 3D */}
       <div className="absolute top-4 left-4 z-[1002]">
         <button
           onClick={() => {
-            if (!geojsonData) return alert('لا توجد بيانات لفتحها في Cesium');
-            try {
-              const encoded = encodeURIComponent(JSON.stringify(geojsonData));
-              const assetId = process.env.NEXT_PUBLIC_CESIUM_ASSET_ID;
-              const url = assetId ? `/cesium?geojson=${encoded}&assetId=${assetId}` : `/cesium?geojson=${encoded}`;
-              window.open(url, '_blank');
-            } catch (e) {
-              alert('فشل تجهيز البيانات للفرونت: ' + e);
-            }
+            window.open('/globe', '_blank');
           }}
-          className="inline-flex items-center rounded-md bg-yellow-100 px-3 py-2 text-xs font-semibold text-yellow-800 ring-1 ring-yellow-200 hover:bg-yellow-200"
+          className="inline-flex items-center rounded-md bg-cyan-950/80 px-3 py-2 text-xs font-semibold text-cyan-300 ring-1 ring-cyan-500/30 hover:bg-cyan-900/80 backdrop-blur-sm shadow-md"
         >
-          🛰️ افتح في Cesium
+          🌐 افتح في عارض Globe 3D
         </button>
       </div>
       {tileLoadError && (

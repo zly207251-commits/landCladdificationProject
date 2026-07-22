@@ -37,8 +37,8 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
   const [samUseFallback, setSamUseFallback] = useState(false);
   const [samMinMaskRegionArea, setSamMinMaskRegionArea] = useState('500');
   const [samPointsPerSide, setSamPointsPerSide] = useState('16');
-  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.86');
-  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.85');
+  const [samPredIoUThresh, setSamPredIoUThresh] = useState('0.45');
+  const [samStabilityScoreThresh, setSamStabilityScoreThresh] = useState('0.30');
   const [tfwContent, setTfwContent] = useState<string | null>(null);
   const [zoom, setZoom] = useState('18');
 
@@ -113,6 +113,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
           formData.append('sam_stability_score_thresh', metadata.sam_stability_score_thresh);
           if (metadata.tfw_content) {
             formData.append('tfw_content', metadata.tfw_content);
+          }
+          if (metadata.styling) {
+            formData.append('styling', JSON.stringify(metadata.styling));
           }
 
           const xhr = new XMLHttpRequest();
@@ -212,6 +215,9 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
     completeForm.append('sam_stability_score_thresh', String(metadata.sam_stability_score_thresh));
     if (metadata.tfw_content) {
       completeForm.append('tfw_content', metadata.tfw_content);
+    }
+    if (metadata.styling) {
+      completeForm.append('styling', JSON.stringify(metadata.styling));
     }
     const completeResp = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.upload}/chunk/complete`, {
       method: 'POST',
@@ -359,7 +365,13 @@ export default function UploadPortal({ onUploadComplete, onProcessingStart }: Up
       sam_points_per_side: samPointsPerSide,
       sam_pred_iou_thresh: samPredIoUThresh,
       sam_stability_score_thresh: samStabilityScoreThresh,
-      tfw_content: tfwContent
+      tfw_content: tfwContent,
+      styling: (() => {
+        try {
+          const stored = window.localStorage.getItem('map_style_settings');
+          return stored ? JSON.parse(stored) : null;
+        } catch { return null; }
+      })()
     };
 
     const uploadId = buildUploadId();

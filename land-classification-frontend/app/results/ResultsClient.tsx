@@ -327,6 +327,68 @@ export default function ResultsClient({ taskId }: ResultsClientProps) {
             </div>
           </div>
 
+          {/* قسم المعاينة المباشرة للصور الجوية وروابط التحميل */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
+                  <span>🖼️</span> الصور الجوية والمعالجة للمهمة
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">معاينة مباشرة ومقارنة متوازية للصورة الأصلية والصورة المعالجة بالذكاء الاصطناعي.</p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {imageSrc && (
+                  <a
+                    href={imageSrc}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3.5 py-1.5 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/40 text-cyan-300 text-xs font-bold transition flex items-center gap-1.5"
+                  >
+                    <span>📥</span> فتح الصورة الأصلية HD
+                  </a>
+                )}
+                {processedImageSrc && (
+                  <a
+                    href={processedImageSrc}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/40 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5"
+                  >
+                    <span>🎨</span> فتح الصورة المعالجة HD
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => router.push(`/results/images?task_id=${taskId}`)}
+                  className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5"
+                >
+                  <span>🔍</span> شاشة المقارنة المتوازية
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              {imageSrc && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3 space-y-2">
+                  <span className="text-xs font-bold text-slate-300 block">الصورة الجوية المرفوعة:</span>
+                  <div className="rounded-xl overflow-hidden bg-black/40 border border-slate-850 h-56 flex items-center justify-center">
+                    <img src={imageSrc} alt="Original Aerial Image" className="max-h-full max-w-full object-contain" />
+                  </div>
+                </div>
+              )}
+
+              {processedImageSrc && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3 space-y-2">
+                  <span className="text-xs font-bold text-slate-300 block">الصورة المعالجة والمسقطة:</span>
+                  <div className="rounded-xl overflow-hidden bg-black/40 border border-slate-850 h-56 flex items-center justify-center">
+                    <img src={processedImageSrc} alt="Processed Image" className="max-h-full max-w-full object-contain" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* سير عمل وكلاء الذكاء الاصطناعي */}
           <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl">
             <h3 className="font-bold text-slate-200 text-sm mb-4 border-b border-slate-800 pb-2">🤖 هيكلية وسير عمل فريق الوكلاء</h3>

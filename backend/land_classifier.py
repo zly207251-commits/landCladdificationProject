@@ -110,9 +110,9 @@ class LandSegmenterSAM:
         self.fail_fast = fail_fast
         self.use_fallback = use_fallback
         self.min_mask_region_area = min_mask_region_area
-        self.points_per_side = 8
-        self.pred_iou_thresh = 0.86
-        self.stability_score_thresh = 0.85
+        self.points_per_side = 16
+        self.pred_iou_thresh = 0.45
+        self.stability_score_thresh = 0.30
         self.tile_size = tile_size
         self.overlap = overlap
         self._models_loaded = False
@@ -248,7 +248,7 @@ class LandSegmenterSAM:
 
         # التحقق إذا كانت الصورة كبيرة وتحتاج إلى المعالجة عبر البلاطات (Tiles)
         # لتسريع المعالجة بشكل كبير وتجنب استهلاك الذاكرة، سنقوم بتصغير الصورة إذا تجاوزت الحد الأقصى للبلاطة
-        MAX_PROCESSING_DIM = 1024
+        MAX_PROCESSING_DIM = 2048
         if h > MAX_PROCESSING_DIM or w > MAX_PROCESSING_DIM:
             print(f"⚡ الصورة كبيرة جداً ({w}x{h}). سيتم تصغيرها مؤقتاً لتسريع معالجة SAM وتوفير الذاكرة...")
             # حساب الأبعاد الجديدة مع الحفاظ على نسبة العرض إلى الارتفاع
@@ -315,7 +315,7 @@ class LandSegmenterSAM:
                             try:
                                 poly = Polygon(pts)
                                 # تبسيط الشكل بشكل أكثر فعالية للحصول على حدود مستقيمة ونظيفة
-                                simple = poly.simplify(1.5, preserve_topology=True)
+                                simple = poly.simplify(0.5, preserve_topology=True)
                                 if not simple.is_empty and simple.is_valid and len(simple.exterior.coords) >= 3:
                                     polygons.append([list(map(float, c)) for c in simple.exterior.coords[:-1]])
                             except Exception:
