@@ -13,7 +13,7 @@ export default function HudNavigation() {
   useEffect(() => {
     const checkServer = async () => {
       try {
-        const resp = await fetch(`${API_CONFIG.baseURL}/tasks`, { method: "GET" });
+        const resp = await fetch(API_CONFIG.baseURL, { method: "GET", cache: "no-store" });
         setServerOnline(resp.ok);
       } catch {
         setServerOnline(false);

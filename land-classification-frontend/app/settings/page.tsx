@@ -89,88 +89,108 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-6">
-      <div className="max-w-7xl mx-auto grid gap-6 lg:grid-cols-[280px_1fr]">
-        <aside className="rounded-3xl bg-white border border-slate-200 p-6 shadow-sm">
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-slate-900">إعدادات SAM</h1>
-            <p className="mt-2 text-sm text-slate-500">تحكم في معايير SAM لتقليل نتائج التجزئة الزائدة أو الضوضاء.</p>
+    <main className="min-h-screen bg-[#0b0f19] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-[#0b0f19] to-black p-4 md:p-8 relative">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b1a_1px,transparent_1px),linear-gradient(to_bottom,#1e293b1a_1px,transparent_1px)] bg-[size:4rem_4rem] pointer-events-none"></div>
+
+      <div className="max-w-7xl mx-auto grid gap-6 lg:grid-cols-[280px_1fr] relative z-10">
+        
+        {/* القائمة الجانبية */}
+        <aside className="engineering-glass p-6 rounded-3xl border border-slate-800 shadow-xl flex flex-col justify-between h-fit gap-6">
+          <div>
+            <div className="mb-6 border-b border-slate-800 pb-4">
+              <h1 className="text-lg font-bold text-white flex items-center gap-2">
+                <span>⚙️</span> إعدادات النظام
+              </h1>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">تخصيص معايير ونماذج الذكاء الاصطناعي والمظهر المساحي.</p>
+            </div>
+            <nav className="space-y-2">
+              <Link href="/" className="block text-center text-xs font-semibold px-4 py-3 bg-slate-900 border border-slate-800 hover:border-slate-750 text-slate-300 rounded-xl transition">
+                🏠 العودة للرئيسية
+              </Link>
+              <Link href="/survey" className="block text-center text-xs font-semibold px-4 py-3 bg-slate-900 border border-slate-800 hover:border-slate-750 text-slate-300 rounded-xl transition">
+                🛰️ منصة استيراد جديد
+              </Link>
+              <Link href="/history" className="block text-center text-xs font-semibold px-4 py-3 bg-slate-900 border border-slate-800 hover:border-slate-750 text-slate-300 rounded-xl transition">
+                📜 سجل ومطابقة السجلات
+              </Link>
+            </nav>
           </div>
-          <nav className="space-y-3">
-            <Link href="/" className="block rounded-2xl bg-blue-600 px-4 py-3 text-white hover:bg-blue-700 transition">
-              الصفحة الرئيسية
-            </Link>
-            <Link href="/history" className="block rounded-2xl bg-slate-100 px-4 py-3 text-slate-900 hover:bg-slate-200 transition">
-              سجل المهام
-            </Link>
-            <Link href="/globe" className="block rounded-2xl bg-slate-100 px-4 py-3 text-slate-900 hover:bg-slate-200 transition">
-              عارض Globe
-            </Link>
-          </nav>
+          <div className="text-[9px] text-slate-500 font-mono-tech border-t border-slate-850 pt-4">
+            GEO-AI SYSTEM V2.0 • YEMEN
+          </div>
         </aside>
 
+        {/* لوحة التحكم بالإعدادات */}
         <section className="space-y-6">
-          <div className="rounded-3xl bg-white p-6 shadow-lg border border-slate-200">
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl border border-slate-800 shadow-xl relative">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-b border-slate-800 pb-4 mb-6">
               <div>
-                <h2 className="text-2xl font-semibold text-slate-900">تكوين معلمات SAM</h2>
-                <p className="mt-2 text-slate-600">هذا الإعداد يؤثر على كيفية استخراج نموذج SAM للأقنعة الهندسية من الصورة.</p>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>⚙️</span> معلمات ومعايير نموذج SAM
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">تعديل معايير Segment Anything لتقليل الضوضاء وتجزئة المضلعات العشوائية.</p>
               </div>
-              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700 text-sm font-medium">
-                {saved ? 'تم حفظ الإعدادات محلياً' : 'التغييرات تُحفظ تلقائياً'}
+              <div className={`px-3 py-1.5 rounded-xl text-[10px] font-mono-tech ${saved ? 'bg-emerald-950/40 border border-emerald-900/40 text-emerald-400' : 'bg-cyan-950/40 border border-cyan-800/40 text-cyan-400'}`}>
+                {saved ? '✓ AUTOSAVED TO LOCAL' : 'ℹ AUTO-SAVING...'}
               </div>
             </div>
 
-            <div className="mt-8 grid gap-6">
+            <div className="grid gap-6">
               <div className="grid gap-4 lg:grid-cols-2">
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">تمكين التراجع في SAM</span>
-                  <div className="mt-3 flex items-center gap-3">
+                <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-300">تمكين التراجع في SAM (Fallback Mode)</span>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                      في حال كانت الأقنعة المستخرجة من الصورة الجوية غير كافية، سيقوم النظام تلقائياً بتخفيف الشروط.
+                    </p>
+                  </div>
+                  <div className="mt-4 flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => update("samUseFallback", !settings.samUseFallback)}
-                      className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition ${settings.samUseFallback ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                      className={`px-4 py-2 text-xs font-bold rounded-xl transition ${settings.samUseFallback ? 'bg-cyan-600 text-slate-950' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'}`}
                     >
-                      {settings.samUseFallback ? 'مفعّل' : 'معطّل'}
+                      {settings.samUseFallback ? 'مفعّل (ACTIVE)' : 'معطّل (DISABLED)'}
                     </button>
-                    <span className="text-sm text-slate-500">إذا كانت نتائج SAM قليلة، سيستخدم النظام التراجع.</span>
                   </div>
-                </label>
+                </div>
 
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">أدنى مساحة لقناع SAM (بكسل)</span>
+                <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-300">أدنى مساحة لقناع SAM (بكسل)</span>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                      تجاهل المضلعات والأقنعة بالغة الصغر لمنع التجزئة العشوائية وتقليل ضوضاء الرسم.
+                    </p>
+                  </div>
                   <input
                     type="number"
                     min="10"
                     step="10"
                     value={settings.samMinMaskRegionArea}
                     onChange={(e) => update("samMinMaskRegionArea", e.target.value)}
-                    className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="mt-4 w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2.5 text-xs font-mono-tech focus:border-cyan-500 focus:outline-none"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    زيادة هذه القيمة تجعل SAM يتجاهل الأقنعة الصغيرة جداً، مما يقلل الضوضاء. خفضها يبقي المزيد من المناطق الصغيرة، لكنه قد يزيد من التجزئة.
-                  </p>
-                </label>
+                </div>
               </div>
 
               <div className="grid gap-4 lg:grid-cols-3">
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">نقاط SAM لكل جانب</span>
+                <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl space-y-3">
+                  <span className="text-xs font-bold text-slate-300">نقاط SAM لكل جانب</span>
                   <input
                     type="number"
                     min="4"
                     step="1"
                     value={settings.samPointsPerSide}
                     onChange={(e) => update("samPointsPerSide", e.target.value)}
-                    className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2.5 text-xs font-mono-tech focus:border-cyan-500 focus:outline-none"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    زيادة العدد تنتج نقاطاً أكثر وأقنعة أدق، لكنها قد تزيد زمن المعالجة. خفض العدد يجعل الحساب أسرع وأقنعة أقل تفصيلاً.
+                  <p className="text-[9px] text-slate-500 leading-relaxed">
+                    زيادة العدد تنتج أقنعة أدق للمباني، لكنها قد تزيد من زمن التحليل.
                   </p>
-                </label>
+                </div>
 
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">عتبة IoU</span>
+                <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl space-y-3">
+                  <span className="text-xs font-bold text-slate-300">عتبة IoU المقدرة</span>
                   <input
                     type="number"
                     min="0.1"
@@ -178,15 +198,15 @@ export default function SettingsPage() {
                     step="0.01"
                     value={settings.samPredIoUThresh}
                     onChange={(e) => update("samPredIoUThresh", e.target.value)}
-                    className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2.5 text-xs font-mono-tech focus:border-cyan-500 focus:outline-none"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    رفع العتبة يجعل SAM أكثر تشدداً في دمج الأقنعة، فيقلل التداخل والنتائج المتكررة. خفضها يجعل النموذج أقل صرامة ويولد المزيد من الأقنعة المحتملة.
+                  <p className="text-[9px] text-slate-500 leading-relaxed">
+                    عتبة دمج المربعات المتقاطعة؛ رفعها يمنع التكرار وخفضها يعطي تفاصيل أكثر.
                   </p>
-                </label>
+                </div>
 
-                <label className="block">
-                  <span className="text-sm font-semibold text-slate-700">ثبات القناع</span>
+                <div className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl space-y-3">
+                  <span className="text-xs font-bold text-slate-300">ثبات قناع الحدود</span>
                   <input
                     type="number"
                     min="0.0"
@@ -194,31 +214,26 @@ export default function SettingsPage() {
                     step="0.01"
                     value={settings.samStabilityScoreThresh}
                     onChange={(e) => update("samStabilityScoreThresh", e.target.value)}
-                    className="mt-3 w-full rounded-2xl border border-slate-300 px-4 py-3 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full bg-slate-950 border border-slate-800 text-slate-100 rounded-xl px-4 py-2.5 text-xs font-mono-tech focus:border-cyan-500 focus:outline-none"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    رفع هذا العدد يجعل النظام يحتفظ فقط بالأقنعة الأكثر ثباتاً، مما يقلل الضوضاء. خفضه يسمح بمزيد من الأقنعة الأقل ثباتاً وقد يزيد التغطية.
+                  <p className="text-[9px] text-slate-500 leading-relaxed">
+                    مستوى ثبات المضلع الجغرافي؛ خفض القيمة يقبل المزيد من المعالم الخشنة.
                   </p>
-                </label>
-              </div>
-
-              <div className="rounded-3xl bg-slate-50 p-6 border border-slate-200">
-                <h3 className="text-lg font-semibold text-slate-900">ملاحظات مهمة</h3>
-                <ul className="mt-3 space-y-2 text-sm text-slate-600 list-disc list-inside">
-                  <li>كل تغيير يُحفظ تلقائياً في المتصفح.</li>
-                  <li>يُستخدم هذا التكوين عند رفع صورة جديدة عبر بوابة الرفع.</li>
-                  <li>خفض القيم يقلل من عدد الأقنعة الصغيرة الزائدة.</li>
-                  <li>رفع القيم يزيد من دقة التقسيم لكنه قد يؤدي إلى نتائج أكبر.</li>
-                </ul>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="rounded-3xl bg-white p-6 shadow-lg border border-slate-200 mt-6">
-            <h2 className="text-2xl font-semibold text-slate-900">🎨 المظهر وتنسيق الخرائط الافتراضي</h2>
-            <p className="mt-2 text-slate-600">حدد ألوان، سماكة، وأشكال الخطوط الافتراضية للمعالم المستخرجة (مباني، طرق، أراضي، إلخ).</p>
+          {/* تنسيق الألوان والمظهر */}
+          <div className="engineering-glass glass-glow-cyan p-6 rounded-3xl border border-slate-800 shadow-xl relative">
+            <div className="border-b border-slate-800 pb-4 mb-6">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <span>🎨</span> مظهر وتنسيق الخطوط الافتراضي (Default CAD Layers Style)
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">تحديد سمات العرض الافتراضية للمعالم المقتطعة على الويب وملفات الأوتوكاد.</p>
+            </div>
             
-            <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {Object.entries({
                 buildings: { label: "المباني والمنشآت 🏢", key: "buildings" },
                 roads: { label: "الطرق والممرات 🛣️", key: "roads" },
@@ -229,23 +244,23 @@ export default function SettingsPage() {
               }).map(([key, item]) => {
                 const cfg = customStyles[key] || { color: "#cccccc", width: 2, dash: "solid", fillOpacity: 0.1 };
                 return (
-                  <div key={key} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <div className="font-semibold text-slate-800 border-b pb-2 mb-2">{item.label}</div>
+                  <div key={key} className="bg-slate-950/40 p-4 border border-slate-850 rounded-2xl space-y-4">
+                    <div className="font-bold text-slate-200 text-xs border-b border-slate-900 pb-2 mb-2">{item.label}</div>
                     
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600">اللون الافتراضي:</span>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-400">اللون الافتراضي:</span>
                       <input
                         type="color"
                         value={cfg.color}
                         onChange={(e) => updateGlobalStyle(key, "color", e.target.value)}
-                        className="w-10 h-8 rounded border cursor-pointer p-0"
+                        className="w-8 h-8 rounded border border-slate-800 cursor-pointer p-0 bg-transparent"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <div className="flex justify-between text-xs text-slate-600">
+                      <div className="flex justify-between text-[10px] text-slate-400">
                         <span>سماكة الخط:</span>
-                        <span className="font-bold">{cfg.width}px</span>
+                        <span className="font-bold font-mono-tech text-cyan-400">{cfg.width}px</span>
                       </div>
                       <input
                         type="range"
@@ -253,14 +268,14 @@ export default function SettingsPage() {
                         max="10"
                         value={cfg.width}
                         onChange={(e) => updateGlobalStyle(key, "width", parseInt(e.target.value))}
-                        className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                        className="w-full h-1 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-cyan-400"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <div className="flex justify-between text-xs text-slate-600">
+                      <div className="flex justify-between text-[10px] text-slate-400">
                         <span>شفافية التعبئة:</span>
-                        <span className="font-bold">{Math.round(cfg.fillOpacity * 100)}%</span>
+                        <span className="font-bold font-mono-tech text-cyan-400">{Math.round(cfg.fillOpacity * 100)}%</span>
                       </div>
                       <input
                         type="range"
@@ -269,16 +284,16 @@ export default function SettingsPage() {
                         step="0.05"
                         value={cfg.fillOpacity}
                         onChange={(e) => updateGlobalStyle(key, "fillOpacity", parseFloat(e.target.value))}
-                        className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                        className="w-full h-1 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-cyan-400"
                       />
                     </div>
 
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600">شكل الخط:</span>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-400">شكل الخط:</span>
                       <select
                         value={cfg.dash}
                         onChange={(e) => updateGlobalStyle(key, "dash", e.target.value)}
-                        className="bg-white text-slate-700 px-2 py-1 rounded border text-sm focus:outline-none focus:border-blue-500"
+                        className="bg-slate-950 text-slate-300 border border-slate-850 px-2 py-1 rounded text-xs focus:outline-none"
                       >
                         <option value="solid">خط مستمر ━</option>
                         <option value="dashed">متقطع ╌</option>

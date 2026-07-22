@@ -27,7 +27,10 @@ export default function Home() {
   // جلب إحصائيات النظام العامة من السيرفر
   useEffect(() => {
     fetch(`${API_CONFIG.baseURL}/tasks`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Server error");
+        return res.json();
+      })
       .then(data => {
         const tasks: Task[] = data.tasks || [];
         const completed = tasks.filter(t => t.status === 'COMPLETED').length;
@@ -37,11 +40,26 @@ export default function Home() {
           ...prev,
           totalTasks: tasks.length,
           completedTasks: completed,
-          estimatedAreaFeddan: Math.round(estimatedArea * 10) / 10
+          estimatedAreaFeddan: Math.round(estimatedArea * 10) / 10,
+          dbStatus: "Online"
         }));
         setRecentTasks(tasks.slice(0, 5)); // جلب آخر 5 مهام فقط
       })
-      .catch(err => console.error("Error loading stats:", err))
+      .catch(err => {
+        console.error("Error loading stats:", err);
+        // التحقق مما إذا كان السيرفر نفسه يعمل
+        fetch(API_CONFIG.baseURL, { cache: "no-store" })
+          .then(res => {
+            if (res.ok) {
+              setStats(prev => ({ ...prev, dbStatus: "تعذر الاتصال بقاعدة البيانات" }));
+            } else {
+              setStats(prev => ({ ...prev, dbStatus: "Offline" }));
+            }
+          })
+          .catch(() => {
+            setStats(prev => ({ ...prev, dbStatus: "Offline" }));
+          });
+      })
       .finally(() => setLoading(false));
   }, []);
 
